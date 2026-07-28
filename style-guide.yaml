@@ -1,0 +1,123 @@
+```yaml
+ui:
+  framework: naive-ui
+  core_components:
+    - NDataTable
+    - NForm / NFormItemGi / NGrid / NInput / NSelect / NTreeSelect
+    - NModal
+    - NButton
+    - NPopconfirm
+    - NCard
+    - NSpace
+    - (自定义封装) TopSearchTool
+    - (自定义封装) TableHeaderOperation
+    - (自定义封装) EngineeringForm
+
+page_patterns:
+  list_page:
+    description: 标准列表页，包含顶部搜索、表格、分页及操作区。
+    structure:
+      search_area:
+        wrapper: TopSearchTool
+        fields_slot: "#fields"
+        actions_slot: "#actions"
+        form: NForm (ref: searchFormRef, model: searchParams)
+        search_fields_example:
+          - component: NSelect (area_code, 数据源由fetchAreaTree动态加载)
+          - component: NInput (relic_name)
+        search_actions:
+          - NButton: "重置" → 重置 searchParams 并调用 getDataByPage(1)
+          - NButton: "搜索" (type=primary) → 验证表单后调用 getDataByPage(1)
+      table_area:
+        wrapper: NCard (title="文物保护范围", header-extra 挂载 TableHeaderOperation)
+        table_operation:
+          component: TableHeaderOperation (v-model:columns, disabled-delete, loading)
+          events: @add, @delete, @refresh
+        datatable:
+          component: NDataTable
+          bindings: v-model:checked-row-keys, :columns, :data, :loading, remote, :row-key, :pagination, :max-height, :scroll-x
+          columns_definition:
+            - type: selection (多选)
+            - index column (由当前页码和pagesize计算)
+            - 业务列 (std_code, relic_name, relic_code, protect_name, city, town, level_desc, province_above 等)
+            - operate column (编辑、删除按钮，使用NButton + NPopconfirm)
+          pagination: 由 composable useNaivePaginatedTable 统一管理，支持 pageSize 切换
+      composable_pattern:
+        - useNaivePaginatedTable: 封装分页、数据加载、列配置，提供 columns, columnChecks, data, loading, pagination, getData, getDataByPage
+        - useNaiveForm: 提供 formRef, validate, restoreValidation
+        - useTableMaxHeight: 计算表格最大高度适配布局
+    action_flow:
+      add:
+        trigger: TableHeaderOperation @add 或页面自定义按钮
+        handler: handleAdd → 设置 addModalVisible = true
+        result: 打开 NModal 内含 EngineeringForm
+      edit:
+        trigger: 操作列 NButton "编辑"
+        handler: handleEdit(row) → router.push 到详情页（独立路由，非弹窗）
+      delete:
+        trigger: 操作列 NPopconfirm 确认
+        handler: handleDelete(id) → API 调用 fetchDeleteProtectScope → 成功后 message.success 并 getData()
+      batch_delete:
+        trigger: TableHeaderOperation @delete
+        handler: handleBatchDelete → 遍历 checkedRowKeys 调用批量删除 API，全部成功则成功提示，否则报告失败数，最后刷新列表
+      search:
+        trigger: 搜索按钮
+        handler: handleSearch → validateSearch → getDataByPage(1)
+      reset:
+        trigger: 重置按钮
+        handler: handleReset → restoreSearchValidation → 重置 searchParams → getDataByPage(1)
+
+  form_component:
+    type: 独立组件 (由父组件提供 NModal 包裹)
+    import_path: "@/components/common/engineering-form/index.vue"
+    props:
+      - name: isAdd
+        type: Boolean
+        usage: 标识是否为新增模式，影响表单初始化和提交逻辑
+      - name: formData
+        type: Array
+        usage: 表单字段配置数组，定义每个字段的类型、键名、标签、校验规则等
+      - name: submit
+        type: Function
+        usage: 异步提交函数，由父组件传入，执行实际的 API 调用
+      - name: config
+        type: Object
+        properties:
+          showFooter: Boolean (默认 true)
+          submitText: String (如 "保存")
+          cancelText: String (如 "取消")
+          labelPlacement: String (如 "left")
+          labelWidth: Number/ String (如 130)
+        usage: 控制表单底部按钮展示与布局
+    events:
+      - name: cancel
+        payload: 无
+        usage: 用户点击取消按钮时发射，父组件负责关闭弹窗或清理状态
+    internal_structure:
+      container: 无内置 Modal；直接渲染表单区域
+      form_wrapper: NForm (利用 Naive UI 的 form 能力，ref="formRef")
+      field_rendering: 循环 formData 生成对应的表单组件（NInput, NSelect, etc.），应用 labelPlacement 等配置
+      footer:
+        condition: config.showFooter 为 true
+        components:
+          - NButton: cancel (点击触发 emit('cancel'))
+          - NButton: submit (type="primary", 点击触发内部表单验证，验证通过后调用 props.submit，并自动管理 loading 状态)
+      behavior:
+        - 接收外部 submit 函数，调用时传入表单数据对象
+        - 提交过程中按钮显示 loading
+        - 外部可通过 ref 调用表单验证或重置方法
+
+collaboration_flow:
+  add_form_flow:
+    step1: 列表页点击“新增” → addModalVisible = true
+    step2: NModal 展示，内部渲染 EngineeringForm，传入 isAdd=true, formData=scopeOfCulturalRelicsFields, submit=handleSubmitAdd, config...
+    step3: 用户填写数据后点击保存按钮
+    step4: EngineeringForm 内部调用 props.submit(formData) → handleSubmitAdd 执行
+          → fetchCreateProtectScope API 调用
+          → 成功后 message.success，关闭弹窗 addModalVisible = false，调用 getData() 刷新列表
+          → 失败则 message.error 并在组件内抛出错误，EngineeringForm 捕获后可停止 loading
+    step5: 用户点击取消 → EngineeringForm 发射 cancel 事件 → handleCancelAdd 执行 → addModalVisible = false
+  edit_form_flow: (当前代码采用路由跳转方式，不通过弹窗表单组件交互)
+    直接 router.push 传递 id，在详情/编辑页通过路由参数加载数据并提交，与 EngineeringForm 的协作模式类似但不在列表页弹窗内。
+  dialog_provider: 列表页通过 NModal 提供弹窗容器，EngineeringForm 只负责表单逻辑，体现“容器-表单”分离的复用模式。
+```
