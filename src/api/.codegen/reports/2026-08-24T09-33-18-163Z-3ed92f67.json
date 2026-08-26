@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "runId": "2026-08-24T09-33-18-163Z-3ed92f67",
+  "startedAt": "2026-08-24T09:33:18.165Z",
+  "outputRoot": "D:\\workCode\\A-大模型开发\\前端CRUD智能自动化工具\\swagger-to-codegen\\src\\api",
+  "force": false,
+  "files": [
+    {
+      "path": "modules/policy.ts",
+      "action": "created",
+      "currentHash": null,
+      "generatedHash": "27f2e78adab12a7948e0dd0376aba7dbbe345ba1c054eb5bd783b6defc9704c2"
+    },
+    {
+      "path": "types/policy.d.ts",
+      "action": "created",
+      "currentHash": null,
+      "generatedHash": "460a9da7c9a8f992ea167b58942c7fae1ea69a98567ef38a65c24ae0aca2d133"
+    }
+  ],
+  "finishedAt": "2026-08-24T09:33:18.256Z",
+  "summary": {
+    "created": 2
+  }
+}

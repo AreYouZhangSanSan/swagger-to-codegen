@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "runId": "2026-08-24T09-28-58-586Z-fdae2054",
+  "startedAt": "2026-08-24T09:28:58.588Z",
+  "outputRoot": "D:\\workCode\\A-大模型开发\\前端CRUD智能自动化工具\\swagger-to-codegen\\src\\api",
+  "force": false,
+  "files": [
+    {
+      "path": "modules/geology.ts",
+      "action": "created",
+      "currentHash": null,
+      "generatedHash": "3f5ba4c662a604a44167b2772f2b7a815c68ab0bbc44e350f1a6bb8d2f0f6ece"
+    },
+    {
+      "path": "types/geology.d.ts",
+      "action": "created",
+      "currentHash": null,
+      "generatedHash": "4d84cea980e8f8273c9fa232caccc340631a444d566a07efd21b381df71bccd2"
+    }
+  ],
+  "finishedAt": "2026-08-24T09:28:58.710Z",
+  "summary": {
+    "created": 2
+  }
+}

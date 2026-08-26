@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "runId": "2026-08-24T09-28-23-684Z-764ca89e",
+  "startedAt": "2026-08-24T09:28:23.685Z",
+  "outputRoot": "D:\\workCode\\A-大模型开发\\前端CRUD智能自动化工具\\swagger-to-codegen\\src\\api",
+  "force": false,
+  "files": [
+    {
+      "path": "modules/hyo.ts",
+      "action": "unchanged",
+      "currentHash": "79a9a4ff66bd30ac102d5665bba5f18eaaa81a14694e03b4e9c1df44a6f6b031",
+      "generatedHash": "79a9a4ff66bd30ac102d5665bba5f18eaaa81a14694e03b4e9c1df44a6f6b031"
+    },
+    {
+      "path": "types/hyo.d.ts",
+      "action": "unchanged",
+      "currentHash": "4e892a8ce9fd8890354a0d05d8c33610e4901690c17df4eaeaf8d4a1e142d2e7",
+      "generatedHash": "4e892a8ce9fd8890354a0d05d8c33610e4901690c17df4eaeaf8d4a1e142d2e7"
+    }
+  ],
+  "finishedAt": "2026-08-24T09:28:23.798Z",
+  "summary": {
+    "unchanged": 2
+  }
+}

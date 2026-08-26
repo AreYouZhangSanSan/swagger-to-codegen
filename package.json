@@ -1,15 +1,22 @@
 {
   "name": "swagger-to-codegen",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "main": "index.js",
+  "bin": {
+    "aquasage-codegen": "./codegen.js"
+  },
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test",
+    "check": "node --check codegen.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "zdwp-aquasage-web 专用 OpenAPI CRUD 代码生成器",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "dependencies": {
     "@langchain/core": "^1.2.3",
     "@langchain/openai": "^1.5.5",
