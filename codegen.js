@@ -22,6 +22,7 @@ import { createIncrementalWriter } from "./lib/incrementalWriter.js";
 import { buildUiPlan } from "./lib/uiPlanner.js";
 import { planAquaSageResources } from "./lib/aquasage/planner.js";
 import { generateAquaSageProject } from "./lib/aquasage/projectGenerator.js";
+import { syncZhCnRouteTitles } from "./lib/aquasage/localeSynchronizer.js";
 
 program
   .name("codegen")
@@ -94,6 +95,107 @@ program
     console.log(
       `类型错误基线 ${result.validation.baselineCount ?? "未检查"}，新增 ${result.validation.newDiagnostics.length}`,
     );
+  });
+
+program
+  .command("sync-zh-cn")
+  .description("无 LLM 生成路由并同步 AquaSage 新页面的 zh-cn 中文标题")
+  .requiredOption(
+    "-s, --swagger <url-or-file>",
+    "OpenAPI URL 或本地 JSON/YAML 文件",
+  )
+  .requiredOption("-p, --project <dir>", "zdwp-aquasage-web 项目根目录")
+  .option("-r, --resource <base-path>", "API 资源基础路径")
+  .option("-m, --module <tag>", "Swagger tag；同 tag 下继续按资源拆分")
+  .option("--slug <name>", "按资源末段选择")
+  .option("--title <text>", "单个资源的中文标题")
+  .option("--titles <json-file>", "按 slug 覆盖标题的 JSON 文件")
+  .option("--all", "同步契约中的全部可识别资源", false)
+  .option("--with-attachment", "同步附件页标题", false)
+  .option("--dry-run", "只检查并输出计划，不生成路由或修改文件", false)
+  .option("--force", "覆盖已经人工修改的中文标题", false)
+  .option("--no-route-generation", "不执行 pnpm exec sa gen-route")
+  .action(async (options) => {
+    if (!options.all && !options.resource && !options.module && !options.slug) {
+      throw new Error(
+        "请提供 --resource、--module 或 --slug；只有明确使用 --all 才会同步全部资源",
+      );
+    }
+    if (options.slug && options.all)
+      throw new Error("--slug 不能与 --all 同时使用");
+    if (options.title && !options.resource && !options.slug) {
+      throw new Error("--title 只能与 --resource 或 --slug 一起使用");
+    }
+
+    console.log(`🚀 读取 OpenAPI: ${options.swagger}`);
+    const document = await loadSwagger(options.swagger);
+    const plans = planAquaSageResources(document, {
+      resource: options.resource,
+      tag: options.module,
+      slug: options.slug,
+      title: options.title,
+      withAttachment: options.withAttachment,
+    });
+
+    if (options.titles) {
+      const titleOverrides = JSON.parse(
+        await fs.promises.readFile(path.resolve(options.titles), "utf8"),
+      );
+      if (
+        !titleOverrides ||
+        Array.isArray(titleOverrides) ||
+        typeof titleOverrides !== "object"
+      ) {
+        throw new Error('--titles 文件必须是 { "slug": "中文标题" } 对象');
+      }
+      for (const plan of plans) {
+        const override = titleOverrides[plan.resource.slug];
+        if (override !== undefined) {
+          if (typeof override !== "string" || !override.trim()) {
+            throw new Error(`标题覆盖 ${plan.resource.slug} 必须是非空字符串`);
+          }
+          plan.resource.title = override.trim();
+        }
+      }
+    }
+
+    console.log(`📦 将同步 ${plans.length} 个 AquaSage 业务资源`);
+    plans.forEach((plan) =>
+      console.log(`  - ${plan.resource.slug}: ${plan.resource.title}`),
+    );
+    const result = await syncZhCnRouteTitles({
+      projectRoot: options.project,
+      plans,
+      dryRun: options.dryRun,
+      force: options.force,
+      routeGeneration: options.routeGeneration,
+    });
+
+    const summary = result.actions.reduce((counts, item) => {
+      counts[item.action] = (counts[item.action] || 0) + 1;
+      return counts;
+    }, {});
+    console.log(
+      `🀄 zh-cn 检查完成：新增 ${summary.created || 0}，更新占位 ${summary.updated || 0}，保留人工标题 ${summary.preserved || 0}，无需修改 ${summary.unchanged || 0}`,
+    );
+    for (const item of result.actions) {
+      console.log(
+        `  [${item.action}] ${item.key}: ${item.previousTitle ?? "<缺失>"} -> ${item.title}`,
+      );
+    }
+    if (result.skippedRouteKeys.length > 0) {
+      console.log("⚠ 以下计划没有对应的实际路由，已跳过：");
+      result.skippedRouteKeys.forEach((key) => console.log(`  ${key}`));
+    }
+    if (result.dryRun) {
+      console.log("🧪 Dry-run，没有生成路由，也没有修改 zh-cn.ts");
+    } else if (!result.changed) {
+      console.log("✅ zh-cn.ts 已是最新状态，无需写入");
+    } else {
+      console.log(`✅ 已更新: ${result.localePath}`);
+      console.log(`📦 备份: ${result.backupPath}`);
+      console.log(`🧾 报告: ${result.reportPath}`);
+    }
   });
 
 program
