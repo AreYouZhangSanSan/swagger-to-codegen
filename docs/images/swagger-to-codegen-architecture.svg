@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f7fbff"/>
+      <stop offset="100%" stop-color="#edf7f8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#16324f" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4f7396"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#e28a32"/>
+    </marker>
+    <style>
+      .font { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+      .title { font-size: 48px; font-weight: 700; fill: #123653; }
+      .subtitle { font-size: 24px; font-weight: 400; fill: #547087; }
+      .section { font-size: 23px; font-weight: 700; fill: #284b67; }
+      .card-title { font-size: 21px; font-weight: 700; fill: #ffffff; }
+      .card-text { font-size: 18px; font-weight: 500; fill: #29475f; }
+      .small { font-size: 16px; font-weight: 500; fill: #527086; }
+      .meta-title { font-size: 22px; font-weight: 700; fill: #173e5b; }
+      .meta-sub { font-size: 16px; font-weight: 500; fill: #617d90; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <g opacity="0.35" stroke="#cfe2eb" stroke-width="1">
+    <path d="M0 180H1920 M0 360H1920 M0 540H1920 M0 720H1920 M0 900H1920"/>
+    <path d="M240 0V1080 M480 0V1080 M720 0V1080 M960 0V1080 M1200 0V1080 M1440 0V1080 M1680 0V1080"/>
+  </g>
+
+  <g class="font">
+    <text class="title" x="72" y="82">Swagger to Codegen 总体架构</text>
+    <text class="subtitle" x="74" y="126">面向 zdwp-aquasage-web 的确定性 CRUD 代码生成流水线</text>
+
+    <g transform="translate(1530,55)">
+      <rect width="315" height="64" rx="32" fill="#d9f4ec" stroke="#76c6af" stroke-width="2"/>
+      <circle cx="34" cy="32" r="13" fill="#149775"/>
+      <path d="M28 32l5 5 9-11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="58" y="40" font-size="21" font-weight="700" fill="#126b57">主流程不使用 LLM</text>
+    </g>
+
+    <text class="section" x="72" y="222">确定性主流程</text>
+    <line x1="244" y1="214" x2="1844" y2="214" stroke="#bed2df" stroke-width="2"/>
+
+    <!-- Main arrows -->
+    <g fill="none" stroke="#4f7396" stroke-width="4" marker-end="url(#arrow)">
+      <path d="M257 421H276"/>
+      <path d="M482 421H501"/>
+      <path d="M707 421H726"/>
+      <path d="M932 421H951"/>
+      <path d="M1157 421H1176"/>
+      <path d="M1382 421H1401"/>
+      <path d="M1607 421H1626"/>
+    </g>
+
+    <!-- Card 1 -->
+    <g transform="translate(55,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#a9c4d5" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#174f7d"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">1</text>
+      <text class="card-title" x="101" y="58" text-anchor="middle">OpenAPI 输入</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="145">URL</text>
+        <text x="101" y="186">JSON</text>
+        <text x="101" y="227">YAML</text>
+      </g>
+    </g>
+
+    <!-- Card 2 -->
+    <g transform="translate(280,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#a9c4d5" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#236ba3"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">2</text>
+      <text class="card-title" x="101" y="48" text-anchor="middle">契约解析</text>
+      <text x="101" y="72" text-anchor="middle" font-size="16" font-weight="600" fill="#dbefff">parser</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="137">文档校验</text>
+        <text x="101" y="184">参数归一</text>
+        <text x="101" y="231">Schema 提取</text>
+      </g>
+    </g>
+
+    <!-- Card 3 -->
+    <g transform="translate(505,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#94c8d3" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#13879c"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">3</text>
+      <text class="card-title" x="101" y="48" text-anchor="middle">资源规划</text>
+      <text x="101" y="72" text-anchor="middle" font-size="16" font-weight="600" fill="#d9f4f6">planner</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="130">资源拆分</text>
+        <text x="101" y="176">CRUD 识别</text>
+        <text x="101" y="222">字段与分页计划</text>
+      </g>
+    </g>
+
+    <!-- Card 4 -->
+    <g transform="translate(730,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#93cabc" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#12937d"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">4</text>
+      <text class="card-title" x="101" y="48" text-anchor="middle">页面落位</text>
+      <text x="101" y="72" text-anchor="middle" font-size="16" font-weight="600" fill="#dcf6ee">placement</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="124">参考模块</text>
+        <text x="101" y="163">目标父路由</text>
+        <text x="101" y="202">目录与命名空间</text>
+        <text x="101" y="241">菜单模式</text>
+      </g>
+    </g>
+
+    <!-- Card 5 -->
+    <g transform="translate(955,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#a7bbdd" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#426bc2"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">5</text>
+      <text class="card-title" x="101" y="48" text-anchor="middle">渲染与写入</text>
+      <text x="101" y="72" text-anchor="middle" font-size="16" font-weight="600" fill="#e6edff">renderer</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="124">Service / 类型</text>
+        <text x="101" y="163">配置 / Vue 页面</text>
+        <text x="101" y="202">增量更新</text>
+        <text x="101" y="241">冲突保护</text>
+      </g>
+    </g>
+
+    <!-- Card 6 -->
+    <g transform="translate(1180,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#b7b5df" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#615db5"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">6</text>
+      <text class="card-title" x="101" y="58" text-anchor="middle">工程集成</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="137">路由配置</text>
+        <text x="101" y="184">sync-zh-cn</text>
+        <text x="101" y="231">路由生成</text>
+      </g>
+    </g>
+
+    <!-- Card 7 -->
+    <g transform="translate(1405,270)" filter="url(#shadow)">
+      <rect width="202" height="302" rx="18" fill="#fff" stroke="#9eb2c6" stroke-width="2"/>
+      <path d="M18 0H184Q202 0 202 18V84H0V18Q0 0 18 0Z" fill="#355773"/>
+      <circle cx="24" cy="24" r="15" fill="#fff" fill-opacity="0.18"/>
+      <text x="24" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">7</text>
+      <text class="card-title" x="101" y="58" text-anchor="middle">质量验证</text>
+      <g class="card-text" text-anchor="middle">
+        <text x="101" y="153">vue-tsc</text>
+        <text x="101" y="205">新增错误对比</text>
+      </g>
+    </g>
+
+    <!-- Target -->
+    <g transform="translate(1630,270)" filter="url(#shadow)">
+      <rect width="225" height="302" rx="18" fill="#effbf7" stroke="#37a58a" stroke-width="3"/>
+      <path d="M18 0H207Q225 0 225 18V84H0V18Q0 0 18 0Z" fill="#08745f"/>
+      <circle cx="28" cy="25" r="16" fill="#fff" fill-opacity="0.2"/>
+      <path d="M20 25l6 6 11-13" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="112.5" y="55" text-anchor="middle" font-size="18" font-weight="700" fill="#fff">zdwp-aquasage-web</text>
+      <g text-anchor="middle">
+        <text x="112.5" y="148" font-size="22" font-weight="700" fill="#126b58">全项目 CRUD</text>
+        <rect x="40" y="184" width="145" height="48" rx="24" fill="#ccefe5"/>
+        <text x="112.5" y="216" font-size="20" font-weight="700" fill="#0c765f">可直接使用</text>
+      </g>
+    </g>
+
+    <!-- Dotted audit connections -->
+    <g fill="none" stroke="#6f91aa" stroke-width="3" stroke-dasharray="8 8">
+      <path d="M606 573V668H250V705"/>
+      <path d="M1056 573V645H848V705"/>
+      <path d="M1506 573V668H1110V705"/>
+    </g>
+
+    <!-- Audit metadata -->
+    <g transform="translate(65,705)" filter="url(#shadow)">
+      <rect width="1225" height="290" rx="22" fill="#fff" stroke="#b7d2df" stroke-width="2"/>
+      <rect width="1225" height="68" rx="22" fill="#e0f0f6"/>
+      <rect y="45" width="1225" height="23" fill="#e0f0f6"/>
+      <text x="36" y="44" class="meta-title">.codegen 可审计元数据</text>
+
+      <g transform="translate(36,98)">
+        <rect width="270" height="145" rx="16" fill="#f3f9fc" stroke="#b9d4e2" stroke-width="2"/>
+        <circle cx="38" cy="42" r="20" fill="#14879c"/>
+        <text x="38" y="49" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">P</text>
+        <text x="72" y="41" class="meta-title">计划 Plans</text>
+        <text x="72" y="73" class="meta-sub">资源、CRUD、落位、分页</text>
+        <text x="72" y="103" class="meta-sub">记录“准备生成什么”</text>
+      </g>
+
+      <g transform="translate(330,98)">
+        <rect width="270" height="145" rx="16" fill="#f3f9fc" stroke="#b9d4e2" stroke-width="2"/>
+        <circle cx="38" cy="42" r="20" fill="#416bc0"/>
+        <text x="38" y="49" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">M</text>
+        <text x="72" y="41" class="meta-title">清单 Manifest</text>
+        <text x="72" y="73" class="meta-sub">文件路径与生成哈希</text>
+        <text x="72" y="103" class="meta-sub">判断“是否人工修改”</text>
+      </g>
+
+      <g transform="translate(624,98)">
+        <rect width="270" height="145" rx="16" fill="#f3f9fc" stroke="#b9d4e2" stroke-width="2"/>
+        <circle cx="38" cy="42" r="20" fill="#615db5"/>
+        <text x="38" y="49" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">B</text>
+        <text x="72" y="41" class="meta-title">备份 Backups</text>
+        <text x="72" y="73" class="meta-sub">覆盖前保存原始文件</text>
+        <text x="72" y="103" class="meta-sub">支持恢复与追溯</text>
+      </g>
+
+      <g transform="translate(918,98)">
+        <rect width="270" height="145" rx="16" fill="#f3f9fc" stroke="#b9d4e2" stroke-width="2"/>
+        <circle cx="38" cy="42" r="20" fill="#355773"/>
+        <text x="38" y="49" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">R</text>
+        <text x="72" y="41" class="meta-title">报告 Reports</text>
+        <text x="72" y="73" class="meta-sub">动作、路由、诊断结果</text>
+        <text x="72" y="103" class="meta-sub">记录“本次做了什么”</text>
+      </g>
+    </g>
+
+    <!-- Secondary LLM path -->
+    <g transform="translate(1330,705)" filter="url(#shadow)">
+      <rect width="525" height="290" rx="22" fill="#fffaf3" stroke="#e4b377" stroke-width="2"/>
+      <rect width="525" height="68" rx="22" fill="#f9e6cc"/>
+      <rect y="45" width="525" height="23" fill="#f9e6cc"/>
+      <text x="32" y="44" font-size="22" font-weight="700" fill="#925515">辅助链路（非主流程）</text>
+      <g transform="translate(44,103)">
+        <rect width="184" height="112" rx="16" fill="#fff" stroke="#e7bd87" stroke-width="2"/>
+        <text x="92" y="45" text-anchor="middle" font-size="19" font-weight="700" fill="#925515">参考模板 + LLM</text>
+        <text x="92" y="79" text-anchor="middle" font-size="16" font-weight="500" fill="#a6743d">页面表达与风格</text>
+      </g>
+      <path d="M247 159H289" fill="none" stroke="#e28a32" stroke-width="4" stroke-dasharray="8 7" marker-end="url(#arrowOrange)"/>
+      <g transform="translate(304,103)">
+        <rect width="177" height="112" rx="16" fill="#fff" stroke="#e7bd87" stroke-width="2"/>
+        <text x="88.5" y="46" text-anchor="middle" font-size="18" font-weight="700" fill="#925515">style / page</text>
+        <text x="88.5" y="78" text-anchor="middle" font-size="18" font-weight="700" fill="#925515">generate</text>
+      </g>
+      <text x="262.5" y="256" text-anchor="middle" font-size="16" font-weight="500" fill="#a6743d">不参与主流程的接口、字段和写入决策</text>
+    </g>
+  </g>
+</svg>

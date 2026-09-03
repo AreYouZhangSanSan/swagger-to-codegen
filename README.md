@@ -2,18 +2,18 @@
 
 > 面向 `zdwp-aquasage-web` 的 OpenAPI CRUD 前端代码生成工具
 
-`swagger-to-codegen` 将 Swagger/OpenAPI 契约转换为 `zdwp-aquasage-web` 可直接使用的 API、类型、字段配置和 Vue 页面。项目的目标不是做一套适配所有前端工程的通用生成器，而是把 AquaSage“工程名录”等高度重复的 CRUD 开发流程固化为命令行工具。
+`swagger-to-codegen` 将 Swagger/OpenAPI 契约转换为 `zdwp-aquasage-web` 可直接使用的 API、类型、字段配置和 Vue 页面。项目的目标不是做一套适配所有前端工程的通用生成器，而是把 AquaSage 各父路由下高度重复的 CRUD 开发流程固化为命令行工具。
 
 | 项目属性 | 当前说明                                                           |
 | -------- | ------------------------------------------------------------------ |
 | 服务对象 | `zdwp-aquasage-web`                                                |
-| 核心场景 | 工程名录及同结构业务资源的 CRUD 页面                               |
+| 核心场景 | 在任意 AquaSage 父路由下生成同结构 CRUD 页面                       |
 | 主要输入 | OpenAPI 3.x / Swagger 2.0，支持 URL、本地 JSON 和 YAML             |
 | 主要输出 | Service API、TypeScript 类型、字段配置、列表页、详情页、可选附件页 |
 | 推荐命令 | `aquasage`                                                         |
 | 设计原则 | 能由契约和项目规范确定的内容全部由脚本生成                         |
 | LLM 依赖 | AquaSage 主流程不依赖；参考模板实验流程依赖                        |
-| 当前版本 | `3.0.0`                                                            |
+| 当前版本 | `3.1.0`                                                            |
 | Node.js  | `>= 20.19.0`                                                       |
 
 ## 1. 项目背景与目标
@@ -48,8 +48,9 @@ OpenAPI 契约
 
 - 生成规范以 `zdwp-aquasage-web` 为唯一目标，不为其他项目牺牲目录、组件或调用约定。
 - `aquasage` 是生产使用的主流程，采用确定性渲染，不调用 LLM。
-- `style`、`page`、`generate` 是保留的“参考模板 + LLM”辅助流程，不是 AquaSage 工程名录的首选方案。
-- 当前专用渲染器聚焦 `knowledge-engineering/engineering-catalog` 下的 CRUD 页面。
+- `style`、`page`、`generate` 是保留的“参考模板 + LLM”辅助流程，不是 AquaSage 专用生成的首选方案。
+- `engineering-catalog` 是向后兼容的默认预设；通过参考模块和目标父路由参数，可生成到 AquaSage 的其他业务模块。
+- “参考模块”只用于识别 AquaSage 已有页面的目录、Service、字段配置和菜单模式，不会把任意 Vue 文件当字符串复制，也不会改变本工具只服务 AquaSage 的边界。
 
 ## 2. 核心价值
 
@@ -67,22 +68,9 @@ OpenAPI 契约
 
 ## 3. 总体架构
 
-```mermaid
-flowchart LR
-    A[OpenAPI URL / JSON / YAML] --> B[parser<br/>文档读取与规范化]
-    B --> C[planner<br/>资源拆分与 CRUD 识别]
-    C --> D[Resource Plan<br/>可审计中间计划]
-    D --> E[renderer<br/>AquaSage 专用渲染]
-    E --> F[Prettier<br/>目标项目格式化]
-    F --> G[incrementalWriter<br/>增量写入与冲突保护]
-    G --> H[路由与中文标题]
-    H --> I[vue-tsc<br/>新增诊断对比]
-    I --> J[zdwp-aquasage-web]
+![Swagger to Codegen 总体架构](./docs/images/swagger-to-codegen-architecture.jpg)
 
-    D -. 计划与复核项 .-> K[.codegen/aquasage]
-    G -. 清单 / 冲突 / 备份 .-> K
-    I -. 运行报告 .-> K
-```
+高清 JPG 可单独用于项目汇报；SVG 源文件保留在 `docs/images/swagger-to-codegen-architecture.svg`，便于后续修改文字和版式。
 
 ### 3.1 分层说明
 
@@ -92,6 +80,7 @@ flowchart LR
 | 契约层          | `lib/parser.js`                                                   | 读取远程或本地文档，兼容 JSON/YAML、OpenAPI/Swagger     |
 | 通用生成层      | `generator.js`、`contractAnalyzer.js`、`uiPlanner.js`             | API、类型、CRUD 证据和通用 UI Plan                      |
 | AquaSage 规划层 | `lib/aquasage/planner.js`                                         | 按稳定资源路径拆分接口并建立资源计划                    |
+| 页面落位层      | `lib/aquasage/placementResolver.js`                               | 分析参考模块并确定父路由、目录、命名空间和菜单模式      |
 | AquaSage 渲染层 | `lib/aquasage/renderer.js`                                        | 输出符合目标项目约定的 service、typing、配置和 Vue 页面 |
 | 工程集成层      | `projectGenerator.js`、`routePatcher.js`、`localeSynchronizer.js` | 写入目标工程、处理两种路由版本、生成报告                |
 | 质量保障层      | `incrementalWriter.js`、`validator.js`、`formatCode.js`           | 路径保护、冲突检测、备份、格式化和类型诊断              |
@@ -105,13 +94,14 @@ flowchart LR
 aquasage
   ├─ parser
   ├─ AquaSage planner
+  ├─ placement resolver
   ├─ AquaSage renderer
   ├─ incremental writer
   ├─ route patch / route generation
   └─ vue-tsc diagnostic diff
 ```
 
-特点：不使用 LLM、输出稳定、目录固定、适合直接写入 `zdwp-aquasage-web`。
+特点：不使用 LLM、输出稳定；业务字段由 OpenAPI 决定，代码落到哪里由 AquaSage 页面落位参数决定。
 
 #### B. 通用模板辅助链路（保留能力）
 
@@ -186,19 +176,34 @@ api / analyze / plan
 
 计划会保存到 `.codegen/aquasage/plans/<slug>.json`，便于检查脚本为何生成某个字段或调用。
 
-### 4.5 AquaSage 专用渲染
+### 4.5 页面落位解析
+
+资源计划只描述“生成什么”，页面落位层描述“生成到哪里”。两者分开后，同一套 CRUD 能力可以安装到 AquaSage 的不同父路由，而不用把工程名录路径写死在渲染器中。
+
+落位层依次处理：
+
+1. `--reference-view`：静态检查参考模块是否属于当前支持的 AquaSage 分页 CRUD 模式；
+2. `--target-parent`：确定新资源所属的父路由；
+3. 从参考模块推断 Service 分组、字段配置分组和菜单显示方式；
+4. 由目标路由推导 view 路径、路由名和组件名；
+5. 允许通过 `--service-group`、`--type-group`、`--config-group`、`--type-namespace` 显式覆盖推断结果；
+6. 当 `--create-parent` 启用时，为新父路由补充中文标题和菜单元数据。
+
+参考页面必须位于目标项目的 `src/views` 内，并至少包含 `list/index.vue`、`NDataTable` 和 AquaSage 分页表格 composable。该检查完全由脚本执行，不调用 LLM。
+
+### 4.6 AquaSage 专用渲染
 
 渲染器不复制任意项目模板，而是固定使用 `zdwp-aquasage-web` 的工程约定：
 
 - `@/service/request` 请求体系；
-- `Api.EngineeringCatalog` 类型命名空间；
+- `Api.<业务分组>` 类型命名空间；工程名录默认仍为 `Api.EngineeringCatalog`；
 - `EngineeringForm` 等公共组件；
 - `useNaivePaginatedTable` 等现有 composable；
-- `knowledge-engineering/engineering-catalog` 路由与页面层级。
+- 由落位计划指定的 AquaSage 路由与页面层级。
 
 这也是生成结果能够直接进入目标项目的关键。
 
-### 4.6 写入与校验
+### 4.7 写入与校验
 
 正式生成时依次执行：
 
@@ -229,6 +234,7 @@ swagger-to-codegen/
 │  ├─ formatCode.js                   # Vue 格式化与临时类型检查
 │  └─ aquasage/
 │     ├─ planner.js                   # AquaSage 资源计划
+│     ├─ placementResolver.js         # 参考模块、目标父路由和目录落位
 │     ├─ renderer.js                  # AquaSage 文件渲染
 │     ├─ projectGenerator.js          # 专用生成总流程
 │     ├─ validator.js                 # 目标工程及类型诊断
@@ -245,7 +251,7 @@ swagger-to-codegen/
 
 ## 6. AquaSage 生成结果
 
-以资源 `river` 为例，`aquasage` 会直接写入目标项目：
+不传页面落位参数时，工具保持旧行为。以资源 `river` 为例，默认写入工程名录：
 
 ```text
 zdwp-aquasage-web/
@@ -257,6 +263,27 @@ zdwp-aquasage-web/
    ├─ detail/index.vue
    └─ attachment/index.vue            # 仅启用且存在引用字段时生成
 ```
+
+如果指定：
+
+```text
+--reference-view src/views/knowledge-engineering/spatial-element/river-system/rivers
+--target-parent /knowledge-engineering/spatial-element/river-system
+```
+
+同一个资源会改为写入：
+
+```text
+zdwp-aquasage-web/
+├─ src/service/api/spatial-element/river.ts
+├─ src/typings/api/spatial-element/river.d.ts
+├─ src/config/engineering/river-fields.ts
+└─ src/views/knowledge-engineering/spatial-element/river-system/river/
+   ├─ list/index.vue
+   └─ detail/index.vue
+```
+
+具体目录与命名空间会记录在 `.codegen/aquasage/plans/<slug>.json` 的 `placement` 字段中。
 
 同时生成审计元数据：
 
@@ -274,241 +301,484 @@ zdwp-aquasage-web/.codegen/
 
 `.codegen` 不属于业务源码，但它是增量生成的可信基线，不建议删除。
 
-## 7. 快速开始
+## 7. 命令选择
 
-### 7.1 环境准备
+先根据当前目标选择功能线，不需要从参数字典开始阅读。
 
-```powershell
-# 进入工具项目
-cd "D:\workCode\A-大模型开发\前端CRUD智能自动化工具\swagger-to-codegen"
+| 我现在想做什么                           | 使用命令     |
+| ---------------------------------------- | ------------ |
+| 直接给 `zdwp-aquasage-web` 生成正式 CRUD | `aquasage`   |
+| 检查 Swagger 的 CRUD 是否完整            | `analyze`    |
+| 检查准备生成哪些字段和控件               | `plan`       |
+| 同步 Elegant Router 路由和 `zh-cn.ts`    | `sync-zh-cn` |
+| 运行旧版 API 生成脚本                    | `index.js`   |
+| 只生成通用 API 和类型                    | `api`        |
+| 分析参考 Vue 页面的风格                  | `style`      |
+| 根据已有 API 生成 Vue 页面               | `page`       |
+| 一次生成通用 API、类型和页面             | `generate`   |
 
-# 安装依赖
-npm install
+项目命令分为三条功能线：
 
-# 检查 CLI
-node .\codegen.js --help
-```
+1. **AquaSage 推荐主流程**：`analyze`、`plan`、`aquasage`、`sync-zh-cn`。
+2. **兼容旧入口**：`index.js`，以及兼容保留的 `api -t` 合并写法。
+3. **通用模板实验功能**：`api`、`style`、`page`、`generate`。
 
-目标 `zdwp-aquasage-web` 应先安装自身依赖；否则路由生成或 `vue-tsc` 检查可能无法执行。
-
-### 7.2 两种调用方式
-
-| 使用场景                     | 命令前缀                     |
-| ---------------------------- | ---------------------------- |
-| 在工具源码目录运行           | `node .\codegen.js`          |
-| 作为依赖安装到业务项目后运行 | `pnpm exec aquasage-codegen` |
-
-下文统一使用源码方式。改为包方式时，只需替换命令前缀，子命令和参数保持不变。
-
-### 7.3 第一步：只预览，不写文件
+查看当前版本和命令帮助：
 
 ```powershell
-node .\codegen.js aquasage `
-  -s "http://10.10.1.206:8000/api/v1/openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  -m "水体相关" `
-  --dry-run
-```
-
-重点检查：
-
-- 识别出的资源数量和 slug；
-- 每个资源的基础路径；
-- 缺少 detail/create/update/delete 等复核警告；
-- 将要写入的文件清单；
-- 是否需要附件页。
-
-### 7.4 第二步：生成业务代码
-
-如果目标项目使用 `src/locales/langs/zh-cn.ts`，先跳过旧版路由补丁：
-
-```powershell
-node .\codegen.js aquasage `
-  -s "http://10.10.1.206:8000/api/v1/openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  -m "水体相关" `
-  --no-routes
-```
-
-### 7.5 第三步：生成路由并同步中文标题
-
-```powershell
-node .\codegen.js sync-zh-cn `
-  -s "http://10.10.1.206:8000/api/v1/openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  -m "水体相关"
-```
-
-该命令完全由脚本执行，不调用 LLM。它会：
-
-1. 在目标项目执行 `pnpm exec sa gen-route`；
-2. 从 `src/router/elegant/routes.ts` 读取实际 `i18nKey`；
-3. 在 `src/locales/langs/zh-cn.ts` 中补充中文标题；
-4. 更新空值或仍等于路由 key 的占位标题；
-5. 默认保留已经人工修改的中文标题；
-6. 修改前备份原文件并生成 JSON 报告。
-
-### 7.6 第四步：人工验收
-
-建议进入目标项目执行：
-
-```powershell
-git status --short
-git diff
-pnpm typecheck
-pnpm dev
-```
-
-具体脚本名以目标项目 `package.json` 为准。至少检查页面字段、分页、详情主键、增删改按钮、路由标题和权限。
-
-## 8. 路由版本选择
-
-AquaSage 项目在不同阶段存在两种路由组织方式。执行前先看目标项目实际文件。
-
-| 目标项目特征                                                        | 处理方式                                             |
-| ------------------------------------------------------------------- | ---------------------------------------------------- |
-| 存在 `src/router/route-titles.ts` 和 `menu-config.ts`               | 直接运行 `aquasage`，默认补丁后执行 `pnpm gen-route` |
-| 存在 `src/locales/langs/zh-cn.ts` 和 `src/router/elegant/routes.ts` | 运行 `aquasage --no-routes`，再运行 `sync-zh-cn`     |
-
-### 8.1 配置式路由版本
-
-```powershell
-node .\codegen.js aquasage `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
-  --resource "/api/v1/prj/pumping-station" `
-  --title "泵站"
-```
-
-默认会向：
-
-- `src/router/route-titles.ts` 写入父级、列表、详情和可选附件标题；
-- `src/router/menu-config.ts` 写入子页隐藏与 `activeMenu` 配置；
-- 然后执行目标项目的 `pnpm gen-route`。
-
-### 8.2 i18n 路由版本
-
-```powershell
-# 1. 生成业务文件，不碰旧版路由配置
-node .\codegen.js aquasage `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  --slug "pumping-station" `
-  --title "泵站" `
-  --no-routes
-
-# 2. 生成 Elegant Router 路由并同步 zh-cn.ts
-node .\codegen.js sync-zh-cn `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  --slug "pumping-station" `
-  --title "泵站"
-```
-
-如果误用默认 `aquasage` 并看到以下错误：
-
-```text
-ENOENT: no such file or directory, open '...\src\router\route-titles.ts'
-```
-
-它表示业务代码已生成到写入阶段，但目标项目不是 `route-titles.ts` 路由版本。改用 `--no-routes`，再执行 `sync-zh-cn`。当前流程不会因为路由后处理失败而自动回滚已经生成的业务文件，因此还应检查 `git status` 和 `.codegen` 报告。
-
-## 9. 命令总览
-
-| 命令         | 是否使用 LLM             | 用途                                  | 推荐程度      |
-| ------------ | ------------------------ | ------------------------------------- | ------------- |
-| `aquasage`   | 否                       | 直接生成 AquaSage 工程名录 CRUD       | 主流程        |
-| `sync-zh-cn` | 否                       | Elegant Router 路由生成与中文标题同步 | i18n 项目必需 |
-| `analyze`    | 否                       | 输出 CRUD 识别证据和覆盖率            | 生成前审计    |
-| `plan`       | 否                       | 输出通用字段、控件、校验和分页计划    | 调试/审计     |
-| `api`        | 否；带模板时页面阶段使用 | 生成通用 API、模块类型和 UI Plan      | 辅助          |
-| `style`      | 是                       | 从参考页面提取风格规范                | 实验流程      |
-| `page`       | 是                       | 根据已有 API、UI Plan 和模板生成页面  | 实验流程      |
-| `generate`   | 是                       | 串联通用 API、风格分析和页面生成      | 实验流程      |
-
-查看全部帮助：
-
-```powershell
+node .\codegen.js --version
 node .\codegen.js --help
 node .\codegen.js aquasage --help
 ```
 
-## 10. 命令使用说明
-
-### 10.1 `aquasage`：生成 AquaSage CRUD
-
-必须显式使用 `--resource`、`--module`、`--slug` 或 `--all`，避免误生成整个 Swagger。
-
-#### 按 Swagger tag 生成多个资源
+如果以依赖包方式安装到业务项目，只需把命令前缀：
 
 ```powershell
-node .\codegen.js aquasage `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
+node .\codegen.js
+```
+
+替换为：
+
+```powershell
+pnpm exec aquasage-codegen
+```
+
+子命令和参数保持不变。
+
+## 8. 第一条功能线：AquaSage 推荐主流程
+
+适用于最终目标是直接完善 `zdwp-aquasage-web` 的场景。
+
+推荐执行顺序：
+
+```text
+analyze（可选）
+    ↓
+plan（可选）
+    ↓
+aquasage --dry-run
+    ↓
+aquasage 正式生成
+    ↓
+sync-zh-cn（Elegant Router 项目需要）
+```
+
+### 8.1 场景一：检查 Swagger 的 CRUD 是否完整
+
+如果后端刚提供 OpenAPI，你想先检查是否包含列表、详情、新增、修改和删除接口，使用 `analyze`。
+
+#### 命令格式
+
+```powershell
+node .\codegen.js analyze -s <OpenAPI地址或文件> -o <报告文件>
+```
+
+#### 参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地 JSON/YAML 文件，必填。
+- `-o, --output <path>`：分析报告输出路径，默认 `codegen-plan.json`。
+
+#### 完整示例：分析 Swagger 的 CRUD 完整度
+
+```powershell
+node .\codegen.js analyze `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -o ".\codegen-plan.json"
+```
+
+#### 生成结果
+
+```text
+codegen-plan.json
+```
+
+报告包含：
+
+- Swagger 模块和接口数量；
+- list/detail/create/update/delete 判断结果；
+- HTTP 方法、URL 和关键词等判断证据；
+- 判断置信度；
+- 每个模块的 CRUD 覆盖率。
+
+这个命令只生成分析报告，不修改 `zdwp-aquasage-web`，不使用 LLM，也不需要 `--dry-run`。
+
+### 8.2 场景二：检查页面准备使用哪些字段和控件
+
+如果你想在生成页面前，检查脚本准备使用哪些查询字段、表格列、表单控件和分页路径，使用 `plan`。
+
+#### 命令格式
+
+```powershell
+node .\codegen.js plan -s <OpenAPI地址或文件> -m <Swagger标签> -o <计划文件>
+```
+
+#### 参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地 JSON/YAML 文件，必填。
+- `-m, --module <tag>`：只生成指定 Swagger tag 的计划；不填写时规划全部 tag。
+- `-o, --output <path>`：UI Plan 输出路径，默认 `ui-plan.json`。
+
+#### 完整示例：检查“水体相关”的页面字段
+
+```powershell
+node .\codegen.js plan `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
   -m "水体相关" `
-  --no-routes
+  -o ".\ui-plan-hyo.json"
 ```
 
-#### 精确生成一个资源
+#### 生成结果
+
+```text
+ui-plan-hyo.json
+```
+
+计划文件包含：
+
+- 查询字段和表格列；
+- 表单字段和输入控件；
+- 必填校验；
+- 分页参数；
+- 列表数据和总数响应路径；
+- CRUD 接口绑定关系。
+
+这个命令只生成计划 JSON，不生成 Vue 页面，不修改 AquaSage，也不使用 LLM。
+
+### 8.3 场景三：直接生成 AquaSage CRUD
+
+如果你想根据 Swagger tag，直接在 `zdwp-aquasage-web` 中生成 Service、类型、字段配置和 Vue 页面，使用 `aquasage`。
+
+#### 命令格式
 
 ```powershell
 node .\codegen.js aquasage `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  --resource "/api/v1/hyo/river" `
-  --title "河流" `
-  --no-routes
+  -s <OpenAPI地址或文件> `
+  -p <zdwp-aquasage-web目录> `
+  -m <Swagger标签> `
+  [其他参数]
 ```
 
-#### 生成附件页
+#### 基础参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地 JSON/YAML 文件，必填。
+- `-p, --project <dir>`：`zdwp-aquasage-web` 项目根目录，必填。
+- `-m, --module <tag>`：按照 Swagger tag 选择资源。
+- `-r, --resource <base-path>`：按照完整 API 资源路径选择一个资源。
+- `--slug <name>`：按照资源 URL 最后一段选择一个资源。
+- `--all`：选择 OpenAPI 中全部可识别资源。
+- `--title <text>`：覆盖单个资源的中文名称。
+- `--with-attachment`：满足条件时生成附件页面。
+- `--dry-run`：只预览资源、路由和文件，不写任何文件。
+- `--force`：备份后覆盖检测到人工修改的文件。
+- `--no-routes`：不修改配置式路由文件。
+- `--no-route-generation`：不执行目标项目的路由生成命令。
+- `--no-check`：不执行生成前后的 `vue-tsc` 新增错误检查。
+
+以下资源选择参数至少填写一个：
+
+```text
+--resource
+--module
+--slug
+--all
+```
+
+#### 第一步：安全预览“水体相关”
 
 ```powershell
 node .\codegen.js aquasage `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  --slug "river" `
-  --title "河流" `
-  --with-attachment `
-  --no-routes
-```
-
-只有列表项包含 `std_code` 或 `project_code` 时附件页才会启用。`--title` 建议只与单资源的 `--resource` 或 `--slug` 一起使用，避免给同一 tag 下多个资源设置相同标题。
-
-常用开关：
-
-| 参数                    | 作用                                      |
-| ----------------------- | ----------------------------------------- |
-| `--dry-run`             | 只验证、规划和格式化，不写目标项目        |
-| `--with-attachment`     | 满足引用字段条件时生成附件页              |
-| `--no-routes`           | 不修改路由配置，也不执行路由生成          |
-| `--no-route-generation` | 仍修改路由配置，但不执行 `pnpm gen-route` |
-| `--no-check`            | 跳过生成前后 `vue-tsc` 诊断对比           |
-| `--force`               | 备份人工文件后强制覆盖                    |
-
-### 10.2 `sync-zh-cn`：检查并修改中文路由标题
-
-#### 同步一个 tag
-
-```powershell
-node .\codegen.js sync-zh-cn `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
-  -m "水体相关"
-```
-
-#### 只检查现有路由，不写文件
-
-```powershell
-node .\codegen.js sync-zh-cn `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
   -m "水体相关" `
   --dry-run
 ```
 
-`--dry-run` 不执行路由生成，因此此时 `src/router/elegant/routes.ts` 必须已经是最新状态。
+这一步会输出：
 
-#### 批量覆盖自动推断标题
+```text
+识别到哪些业务资源
+每个资源使用哪个 API 基础路径
+每个资源准备生成到哪个父路由
+准备创建或更新哪些文件
+缺少哪些 CRUD 接口
+```
+
+不会写入业务文件、路由文件或 `.codegen` 元数据。
+
+#### 第二步：正式生成“水体相关”
+
+确认预览结果正确后，删除 `--dry-run`：
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  -m "水体相关"
+```
+
+#### 生成结果
+
+“水体相关”tag 下可能包含多个资源，脚本会继续按照 API 基础路径拆分。
+
+```text
+zdwp-aquasage-web/
+├─ src/service/api/engineering-catalog/
+│  ├─ river.ts
+│  ├─ lake.ts
+│  └─ other-water.ts
+├─ src/typings/api/engineering-catalog/
+│  ├─ river.d.ts
+│  ├─ lake.d.ts
+│  └─ otherWater.d.ts
+├─ src/config/engineering/
+│  ├─ river-fields.ts
+│  ├─ lake-fields.ts
+│  └─ other-water-fields.ts
+├─ src/views/knowledge-engineering/engineering-catalog/
+│  ├─ river/
+│  │  ├─ list/index.vue
+│  │  └─ detail/index.vue
+│  ├─ lake/
+│  │  ├─ list/index.vue
+│  │  └─ detail/index.vue
+│  └─ other-water/
+│     ├─ list/index.vue
+│     └─ detail/index.vue
+└─ .codegen/
+   └─ aquasage/
+      ├─ plans/
+      ├─ reports/
+      └─ backups/
+```
+
+实际文件以 Swagger 中识别到的资源和终端输出为准。
+
+### 8.4 场景四：只生成一个指定资源
+
+如果一个 Swagger tag 下有多个资源，但你只想生成“河流”，可以使用 `--resource` 或 `--slug`。
+
+#### 按完整 API 路径选择
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  --resource "/api/v1/hyo/river" `
+  --title "河流" `
+  --dry-run
+```
+
+#### 按资源 slug 选择
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  --slug "river" `
+  --title "河流" `
+  --dry-run
+```
+
+#### 参数说明
+
+- `--resource <base-path>`：资源的完整 API 基础路径。
+- `--slug <name>`：API URL 最后一段，例如 `river`。
+- `--title <text>`：该资源的中文名称。
+
+`--title` 建议只与单资源的 `--resource` 或 `--slug` 一起使用。确认结果后删除 `--dry-run`。
+
+### 8.5 场景五：模仿现有页面，生成到指定父路由
+
+如果你不想生成到默认“工程名录”，而是想模仿“河流水系”下面的现有页面，并把新页面放到指定父路由，使用以下参数。
+
+#### 参数说明
+
+- `--reference-view <path>`：参考业务模块目录，或者其 `list/index.vue`。
+- `--target-parent <route-path>`：新页面所属父路由。
+- `--menu-mode <mode>`：菜单显示模式。
+  - `reference`：模仿参考页面。
+  - `resource`：每个资源显示为独立菜单。
+  - `parent`：只显示父菜单，资源页面隐藏。
+- `--active-menu <route-name>`：隐藏页面需要点亮的菜单路由名。
+
+#### 完整示例：参考河流水系生成“渠道”
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  --resource "/api/v1/hyo/channel" `
+  --title "渠道" `
+  --reference-view "src/views/knowledge-engineering/spatial-element/river-system/rivers" `
+  --target-parent "/knowledge-engineering/spatial-element/river-system" `
+  --menu-mode reference `
+  --dry-run
+```
+
+#### 预计生成位置
+
+```text
+src/views/knowledge-engineering/spatial-element/river-system/channel/
+├─ list/index.vue
+├─ detail/index.vue
+└─ attachment/index.vue    # 满足条件且使用 --with-attachment 时生成
+```
+
+确认位置正确后删除 `--dry-run`。
+
+### 8.6 场景六：创建新的父路由
+
+如果目标父路由还不存在，需要添加 `--create-parent`。
+
+#### 参数说明
+
+- `--create-parent`：创建新的父路由分组。
+- `--target-parent <route-path>`：新父路由路径，必填。
+- `--parent-title <text>`：新父路由中文标题，必填。
+- `--parent-icon <icon>`：新父路由图标。
+- `--parent-order <number>`：新父路由菜单排序。
+- `--parent-permission <key>`：新父路由权限码。
+- `--permission <key>`：新资源权限码。
+- `--order <number>`：新资源菜单排序。
+
+#### 完整示例：创建“水文档案”父路由
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  --resource "/api/v1/hyo/channel" `
+  --title "渠道" `
+  --reference-view "src/views/knowledge-engineering/spatial-element/river-system/rivers" `
+  --target-parent "/knowledge-engineering/hydrology-archive" `
+  --create-parent `
+  --parent-title "水文档案" `
+  --parent-icon "mdi:archive-water" `
+  --parent-order 8 `
+  --menu-mode resource `
+  --dry-run
+```
+
+使用 `--create-parent` 时：
+
+- 必须同时提供 `--target-parent`；
+- 必须同时提供 `--parent-title`；
+- 新父路由的上级目录必须已经存在。
+
+### 8.7 场景七：自定义代码输出分组
+
+如果默认的 Service、类型和字段配置目录不符合目标父路由，可以手动指定。
+
+#### 参数说明
+
+- `--service-group <path>`：`src/service/api` 下的输出目录。
+- `--type-group <path>`：`src/typings/api` 下的输出目录。
+- `--config-group <path>`：`src/config` 下的输出目录。
+- `--type-namespace <name>`：`Api` 下的 TypeScript 命名空间。
+- `--attachment-service <path>`：附件 Service 导入路径。
+
+#### 完整示例
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  --resource "/api/v1/hyo/channel" `
+  --title "渠道" `
+  --target-parent "/knowledge-engineering/hydrology-archive" `
+  --service-group "hydrology-archive" `
+  --type-group "hydrology-archive" `
+  --config-group "hydrology" `
+  --type-namespace "HydrologyArchive" `
+  --dry-run
+```
+
+#### 预计生成位置
+
+```text
+src/service/api/hydrology-archive/channel.ts
+src/typings/api/hydrology-archive/channel.d.ts
+src/config/hydrology/channel-fields.ts
+src/views/knowledge-engineering/hydrology-archive/channel/
+```
+
+### 8.8 场景八：同步 `zh-cn.ts` 中文标题
+
+如果项目采用以下文件：
+
+```text
+src/router/elegant/routes.ts
+src/locales/langs/zh-cn.ts
+```
+
+需要分两步执行。
+
+#### 第一步：生成业务代码并跳过配置式路由
+
+```powershell
+node .\codegen.js aquasage `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  -m "水体相关" `
+  --no-routes
+```
+
+#### 第二步：预览中文标题
+
+```powershell
+node .\codegen.js sync-zh-cn `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  -m "水体相关" `
+  --dry-run
+```
+
+#### 第三步：正式生成路由并同步标题
+
+```powershell
+node .\codegen.js sync-zh-cn `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
+  -m "水体相关"
+```
+
+#### `sync-zh-cn` 特有参数
+
+- `--titles <json-file>`：使用 JSON 批量指定资源中文标题。
+- `--dry-run`：只检查标题，不生成路由、不修改文件。
+- `--force`：覆盖已有人工中文标题。
+- `--no-route-generation`：不执行 `pnpm exec sa gen-route`。
+- `--with-attachment`：同步附件页面标题。
+
+其他资源选择、参考页面、目标父路由和菜单参数，与 `aquasage` 含义相同。
+
+如果 `aquasage` 使用了以下参数，`sync-zh-cn` 必须保持一致：
+
+```text
+--resource / --module / --slug / --all
+--reference-view
+--target-parent
+--menu-mode
+--create-parent
+--parent-title
+--service-group
+--type-group
+--config-group
+--type-namespace
+```
+
+#### 生成或修改结果
+
+```text
+zdwp-aquasage-web/
+├─ src/router/elegant/routes.ts
+├─ src/locales/langs/zh-cn.ts
+└─ .codegen/aquasage/
+   ├─ reports/
+   └─ backups/
+```
+
+### 8.9 场景九：批量指定中文标题
 
 创建 `zh-cn-titles.json`：
 
@@ -518,62 +788,165 @@ node .\codegen.js sync-zh-cn `
   "river": "河流",
   "other-water": "其他水体",
   "lake": "湖泊",
-  "qsc-circle": "QSC圈层",
-  "hyo": "水体综合数据"
+  "qsc-circle": "QSC圈层"
 }
 ```
 
-然后执行：
+先预览：
 
 ```powershell
 node .\codegen.js sync-zh-cn `
-  -s ".\openapi.json" `
-  -p "D:\workCode\知识库\zdwp-aquasage-web" `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -p "D:\workCode\知识库\2026-08-10-1\zdwp-aquasage-web" `
   -m "水体相关" `
-  --titles ".\zh-cn-titles.json"
+  --titles ".\zh-cn-titles.json" `
+  --dry-run
 ```
 
-默认不会覆盖已有人工中文标题；只有确认需要覆盖时才添加 `--force`。
+确认后删除 `--dry-run`。默认保留已有人工中文标题，只有明确需要覆盖时才添加 `--force`。
 
-如果附件页已通过 `aquasage --with-attachment` 生成，同步标题时也应添加 `--with-attachment`。使用 `--no-route-generation` 可以跳过 `pnpm exec sa gen-route`，直接检查当前已有的 `routes.ts`。
+## 9. 第二条功能线：兼容旧入口
 
-### 10.3 `analyze`：分析 CRUD 契约
+兼容旧入口只为旧脚本和旧使用习惯保留，不推荐新成员继续使用。
+
+### 9.1 场景一：旧项目仍然调用 `index.js`
+
+#### 命令格式
 
 ```powershell
-node .\codegen.js analyze `
-  -s ".\openapi.json" `
-  -o ".\codegen-plan.json"
+node .\index.js -s <Swagger地址> -m <Swagger标签> -o <输出目录>
 ```
 
-输出 `codegen-plan.json`，包含：
+#### 参数说明
 
-- 模块和接口数量；
-- 每个接口推断的 CRUD 角色；
-- HTTP 方法、关键词和路径参数等证据；
-- 置信度及是否需要人工复核；
-- 每个模块的 CRUD 覆盖率。
+- `-s, --swagger <url>`：Swagger 文档 URL，必填。
+- `-m, --module <tag>`：指定 Swagger tag；不填写时生成全部 tag。
+- `-o, --output <dir>`：输出目录，默认 `./src/api`。
 
-### 10.4 `plan`：生成确定性 UI Plan
+#### 完整示例：旧版生成“水体相关”API
 
 ```powershell
-node .\codegen.js plan `
-  -s ".\openapi.json" `
-  -m "水体相关" `
-  -o ".\ui-plan-hyo.json"
-```
-
-输出包含 API 绑定、查询字段、表格字段、表单字段、控件、校验、分页参数、响应路径和禁止虚构字段等约束。
-
-### 10.5 `api`：仅生成通用 API 和模块类型
-
-```powershell
-node .\codegen.js api `
-  -s ".\openapi.json" `
+node .\index.js `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
   -m "水体相关" `
   -o ".\src\api"
 ```
 
-输出示例：
+#### 生成结果
+
+```text
+src/api/
+├─ modules/hyo.ts
+└─ types/api.d.ts
+```
+
+旧版特点：
+
+- 所有模块共享一个 `types/api.d.ts`；
+- 不生成模块独立类型文件；
+- 不生成 UI Plan；
+- 没有增量写入保护；
+- 没有冲突文件、备份和运行报告；
+- 不支持 AquaSage 专用页面和路由。
+
+新代码应该改用：
+
+```powershell
+node .\codegen.js api
+```
+
+### 9.2 场景二：继续使用旧的 `api -t` 合并写法
+
+`api` 可以在生成 API 后直接进入页面生成阶段，但这个功能和 `generate` 重复，只作为兼容快捷方式保留。
+
+#### 命令格式
+
+```powershell
+node .\codegen.js api `
+  -s <OpenAPI地址或文件> `
+  -m <Swagger标签> `
+  -o <API输出目录> `
+  -t <参考列表页> `
+  -p <页面输出目录>
+```
+
+#### 参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地 JSON/YAML，必填。
+- `-m, --module <tag>`：指定一个 Swagger tag，使用 `-t` 时必填。
+- `-o, --output <dir>`：API 和类型输出目录，默认 `./src/api`。
+- `-t, --template <path>`：参考列表页。
+- `--form-template <path>`：参考详情或表单页。
+- `-p, --page-output <dir>`：页面输出目录，默认 `./src/views`。
+- `--api-import-path <path>`：API 导入路径前缀，默认 `@/api/modules`。
+- `--ui-plan <path>`：页面阶段使用的 UI Plan。
+- `--force`：备份后覆盖检测到人工修改的文件。
+
+#### 完整示例
+
+```powershell
+node .\codegen.js api `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -m "政策相关" `
+  -o ".\src\api" `
+  -t "D:\ref-project\list\index.vue" `
+  --form-template "D:\ref-project\detail\index.vue" `
+  -p ".\src\views"
+```
+
+限制：
+
+- 使用 `-t` 时必须同时提供 `-m`；
+- `--form-template` 和 `--ui-plan` 必须与 `-t` 一起使用；
+- 页面阶段需要 LLM。
+
+新使用方式建议拆成 `api` 和 `page`，或者直接使用 `generate`。
+
+## 10. 第三条功能线：通用模板实验功能
+
+通用模板实验功能不保证完全符合 AquaSage 专用目录、路由和页面规范。
+
+适合：
+
+- 验证通用 Swagger API 生成；
+- 尝试根据参考页面生成 Vue；
+- 测试 LLM 页面生成能力；
+- 生成其他临时模块；
+- 不直接作为 AquaSage 正式 CRUD 主流程。
+
+### 10.1 场景一：只生成通用 API 和类型文件
+
+#### 命令格式
+
+```powershell
+node .\codegen.js api -s <OpenAPI地址或文件> -m <Swagger标签> -o <输出目录>
+```
+
+#### 参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地 JSON/YAML，必填。
+- `-m, --module <tag>`：指定 Swagger tag；不填写时生成全部 tag。
+- `-o, --output <dir>`：API 和类型输出目录，默认 `./src/api`。
+- `--force`：备份后覆盖检测到人工修改的生成文件。
+
+以下是兼容保留的页面参数，单独生成 API 时不需要填写：
+
+- `-t, --template <path>`：生成 API 后继续生成页面。
+- `--form-template <path>`：参考详情或表单页。
+- `-p, --page-output <dir>`：页面输出目录，默认 `./src/views`。
+- `--api-import-path <path>`：API 导入路径前缀，默认 `@/api/modules`。
+- `--ui-plan <path>`：页面阶段使用的 UI Plan。
+
+#### 完整示例：仅生成“水体相关”API 和类型
+
+```powershell
+node .\codegen.js api `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
+  -m "水体相关" `
+  -o ".\src\api"
+```
+
+#### 生成结果
 
 ```text
 src/api/
@@ -585,13 +958,30 @@ src/api/
    └─ reports/
 ```
 
-每个模块拥有独立类型文件。例如 `modules/hyo.ts` 从 `../types/hyo` 导入，避免不同模块共享或覆盖旧的 `types/api.d.ts`。类型生成会递归补齐 `$ref` 引用闭包，包括 FastAPI nullable 包装中的引用。
+每个模块生成独立类型文件：
 
-`api` 也支持通过 `-t` 直接进入模板页面阶段，但为了排查问题和保留清晰边界，建议先执行 `api`，再单独执行 `page`。
+```text
+modules/hyo.ts       → types/hyo.d.ts
+modules/geology.ts   → types/geology.d.ts
+modules/policy.ts    → types/policy.d.ts
+```
 
-### 10.6 `style`：分析参考页面风格
+如果发现人工修改冲突，命令会失败并输出候选文件。确认覆盖时添加 `--force`。
 
-此命令使用 LLM。
+### 10.2 场景二：把参考 Vue 页面分析成风格规范
+
+#### 命令格式
+
+```powershell
+node .\codegen.js style <参考页面.vue> -o <风格规范.yaml>
+```
+
+#### 参数说明
+
+- `<file>`：参考列表页路径，必填，直接写在 `style` 后面。
+- `-o, --output <path>`：风格规范输出路径，默认 `style-guide.yaml`。
+
+#### 完整示例
 
 ```powershell
 node .\codegen.js style `
@@ -599,20 +989,44 @@ node .\codegen.js style `
   -o ".\style-guide.yaml"
 ```
 
-输出的 YAML 描述列表页、表单、详情页、增删改流程和路由模式。它只应提供页面表达风格，不能替代 OpenAPI 中的业务字段和 API 事实。
+#### 生成结果
 
-### 10.7 `page`：基于已有 API 生成页面
-
-此命令使用 LLM；用户提出的以下形式是有效命令：
-
-```powershell
-node .\codegen.js page `
-  --api-file ".\src\api\modules\policy.ts" `
-  -t "D:\ref-project\list\index.vue" `
-  -o ".\src\views"
+```text
+style-guide.yaml
 ```
 
-完整示例：
+这个命令使用 LLM。正确写法是：
+
+```powershell
+node .\codegen.js style "D:\ref-project\list\index.vue"
+```
+
+不是：
+
+```powershell
+node .\codegen.js style --file "D:\ref-project\list\index.vue"
+```
+
+### 10.3 场景三：根据已有 API 文件生成 Vue 页面
+
+#### 命令格式
+
+```powershell
+node .\codegen.js page --api-file <API文件.ts> -t <参考页面.vue> -o <输出目录>
+```
+
+#### 参数说明
+
+- `--api-file <path>`：已生成的 API 模块文件，必填。
+- `--style-guide <path>`：风格规范文件，默认 `style-guide.yaml`。
+- `-t, --template <path>`：参考列表页模板；源码中为可选参数。
+- `--form-template <path>`：参考详情或表单模板。
+- `-o, --output <dir>`：页面输出目录，默认 `./src/views`。
+- `--api-import-path <path>`：页面中的 API 导入路径，默认 `@/api/modules`。
+- `--ui-plan <path>`：对应的 UI Plan JSON。
+- `--force`：备份后覆盖人工修改页面。
+
+#### 完整示例：基于水体 API 生成页面
 
 ```powershell
 node .\codegen.js page `
@@ -625,23 +1039,55 @@ node .\codegen.js page `
   -o ".\src\views"
 ```
 
-预期输出：
+#### 生成结果
 
 ```text
-src/views/hyo/
-├─ list/index.vue
-└─ detail/index.vue
+src/views/
+└─ hyo/
+   ├─ list/index.vue
+   └─ detail/index.vue
 ```
 
-骨架提取器优先读取与 API 同名的类型文件，例如 `modules/hyo.ts` 对应 `types/hyo.d.ts`，仅在必要时回退到旧的 `types/api.d.ts`。
+`page` 会优先读取与 API 同名的类型文件：
 
-### 10.8 `generate`：通用模板全流程
+```text
+modules/hyo.ts → types/hyo.d.ts
+```
 
-此命令使用 LLM。
+只有找不到模块独立类型时，才兼容旧的 `types/api.d.ts`。这个命令使用 LLM。
+
+### 10.4 场景四：一条命令生成 API、类型和页面
+
+#### 命令格式
 
 ```powershell
 node .\codegen.js generate `
-  -s ".\openapi.json" `
+  -s <OpenAPI地址或文件> `
+  -m <Swagger标签> `
+  -t <参考页面.vue> `
+  --api-output <API输出目录> `
+  -o <页面输出目录>
+```
+
+#### 参数说明
+
+- `-s, --swagger <url-or-file>`：OpenAPI URL 或本地文件；正常生成 API 时必填。
+- `-m, --module <tag>`：指定 Swagger tag，必填。
+- `-t, --template <path>`：参考列表页，必填。
+- `--form-template <path>`：参考详情或表单页。
+- `-o, --output <dir>`：页面输出目录，默认 `./src/views`。
+- `--api-output <dir>`：API 和类型输出目录，默认 `./src/api`。
+- `--style-guide <path>`：风格规范路径，默认 `style-guide.yaml`。
+- `--skip-api`：跳过 API 和类型生成。
+- `--api-module <name>`：使用 `--skip-api` 时指定已有模块文件名。
+- `--api-import-path <path>`：API 导入路径前缀，默认 `@/api/modules`。
+- `--force`：备份后覆盖人工修改文件。
+
+#### 完整示例：一次生成政策 API、类型和页面
+
+```powershell
+node .\codegen.js generate `
+  -s "http://19.19.12.206:8000/api/v1/openapi.json" `
   -m "政策相关" `
   -t "D:\ref-project\list\index.vue" `
   --form-template "D:\ref-project\detail\index.vue" `
@@ -651,15 +1097,89 @@ node .\codegen.js generate `
   -o ".\src\views"
 ```
 
-执行顺序：
+#### 生成结果
 
-1. 生成 API、模块类型和 UI Plan；
-2. 使用已有风格规范，或从参考模板分析生成；
-3. 从 API 与类型文件提取页面骨架；
-4. 调用 LLM 生成 Vue 文件；
-5. 使用临时文件运行 `vue-tsc`；
-6. 最多进行 3 次 LLM 定向修复；
-7. 通过增量写入策略落盘。
+```text
+src/api/
+├─ modules/policy.ts
+├─ types/policy.d.ts
+└─ .codegen/
+   ├─ ui-plan.json
+   ├─ manifest.json
+   └─ reports/
+
+src/views/
+└─ policy/
+   ├─ list/index.vue
+   └─ detail/index.vue
+```
+
+页面阶段使用 LLM。
+
+### 10.5 场景五：API 已存在，只重新生成页面
+
+如果以下文件已经存在：
+
+```text
+src/api/modules/policy.ts
+src/api/types/policy.d.ts
+```
+
+可以跳过 API 生成。
+
+#### 完整示例
+
+```powershell
+node .\codegen.js generate `
+  --skip-api `
+  --api-module "policy" `
+  -m "政策相关" `
+  -t "D:\ref-project\list\index.vue" `
+  --form-template "D:\ref-project\detail\index.vue" `
+  --api-output ".\src\api" `
+  -o ".\src\views"
+```
+
+限制：
+
+- 使用 `--skip-api` 时必须提供 `--api-module`；
+- 使用 `--skip-api` 时可以省略 `-s`；
+- `--api-module` 不能脱离 `--skip-api` 单独使用；
+- `-m` 和 `-t` 仍然必填。
+
+如果只是根据已有 API 生成页面，更简单的命令是 `page`。
+
+### 10.6 三条功能线总结
+
+正式开发 AquaSage：
+
+```text
+analyze / plan
+       ↓
+aquasage --dry-run
+       ↓
+aquasage
+       ↓
+sync-zh-cn
+```
+
+通用模板实验：
+
+```text
+api
+ ↓
+style
+ ↓
+page
+```
+
+或者一条命令：
+
+```text
+generate
+```
+
+兼容功能 `index.js` 和 `api -t` 仅放在兼容章节，不再作为新项目的推荐用法。
 
 ## 11. LLM 配置
 
@@ -714,6 +1234,11 @@ npm test
 - 同 tag 多资源拆分；
 - AquaSage 分页、详情键、区域字段和附件约定；
 - 专用目录与渲染结果；
+- 参考模块推断与自定义父路由落位；
+- 新父路由标题、菜单配置和列表重定向幂等性；
+- 8 个子命令的 `--help` 都包含小白场景示例；
+- `aquasage --help` 必须持续展示 `--dry-run`；
+- 无效参数组合会直接报错，不再静默忽略；
 - dry-run 不写文件；
 - 重复生成幂等；
 - 路由配置补丁和备份；
@@ -724,7 +1249,7 @@ npm test
 - 人工修改冲突和强制覆盖备份；
 - i18n 路由 key 提取、`zh-cn.ts` 更新、保留人工标题和 dry-run。
 
-当前基线共 24 个自动化测试。
+当前基线共 31 个自动化测试。
 
 ### 13.2 生成结果检查
 
@@ -782,6 +1307,14 @@ node .\codegen.js analyze -s ".\openapi.json" -o ".\codegen-plan.json"
 
 单资源使用 `--slug/--resource + --title`；多个资源使用 `sync-zh-cn --titles <json-file>`。默认保留已有人工翻译。
 
+### 14.9 参考页面是不是会被完整复制？
+
+不是。脚本只静态识别参考模块的 AquaSage 分页 CRUD 特征、Service 分组、字段配置分组和菜单模式。新页面的接口、字段、校验和能力仍来自 OpenAPI，页面由确定性渲染器生成。
+
+### 14.10 为什么 `sync-zh-cn` 找不到自定义路由 key？
+
+最常见原因是第二条命令漏掉了第一条命令使用的落位参数。请确保 `--resource/--slug`、`--reference-view`、`--target-parent`、`--menu-mode`、`--create-parent` 和父路由信息保持一致，然后重新生成路由并同步标题。
+
 ## 15. 作为团队工具使用
 
 `package.json` 已注册命令：
@@ -804,10 +1337,10 @@ npm test
 npm pack
 ```
 
-将生成的 `swagger-to-codegen-3.0.0.tgz` 发给小组成员。成员在自己的 `zdwp-aquasage-web` 中安装：
+将生成的 `swagger-to-codegen-3.1.0.tgz` 发给小组成员。成员在自己的 `zdwp-aquasage-web` 中安装：
 
 ```powershell
-pnpm add -D "D:\packages\swagger-to-codegen-3.0.0.tgz"
+pnpm add -D "D:\packages\swagger-to-codegen-3.1.0.tgz"
 ```
 
 然后从业务项目根目录执行：
@@ -841,6 +1374,8 @@ pnpm exec aquasage-codegen sync-zh-cn `
 ### 当前实现成果
 
 - 已形成 AquaSage 专用的资源规划器和代码渲染器；
+- 已将业务资源规划与页面落位分离，支持参考现有模块生成到指定父路由；
+- 支持在已有父路由下新增资源，也支持显式创建新的父路由分组；
 - 支持一个 Swagger tag 自动拆分为多个稳定业务资源；
 - 可一次生成 service、typing、字段配置、列表、详情和附件页面；
 - 支持配置式路由与 Elegant Router i18n 两种目标版本；
@@ -851,6 +1386,7 @@ pnpm exec aquasage-codegen sync-zh-cn `
 ## 17. 进一步阅读
 
 - `docs/deterministic-pipeline.md`：为什么优先使用确定性脚本，以及 LLM 的职责边界。
+- `docs/aquasage-project-wide-refactor-tutorial.md`：本次从工程名录预设扩展到 AquaSage 全项目落位的逐步重构教程。
 - `docs/patent-technical-disclosure.md`：更完整的技术方案和创新点说明。
 
 ## License

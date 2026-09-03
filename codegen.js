@@ -23,15 +23,27 @@ import { buildUiPlan } from "./lib/uiPlanner.js";
 import { planAquaSageResources } from "./lib/aquasage/planner.js";
 import { generateAquaSageProject } from "./lib/aquasage/projectGenerator.js";
 import { syncZhCnRouteTitles } from "./lib/aquasage/localeSynchronizer.js";
+import { configureAquaSagePlans } from "./lib/aquasage/placementResolver.js";
 
 program
   .name("codegen")
   .description("zdwp-aquasage-web 专用 CRUD 代码生成工具")
-  .version("3.0.0");
+  .version("3.1.0")
+  .showHelpAfterError("可执行 node .\\codegen.js <命令> --help 查看完整参数。")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "推荐主流程：aquasage（先加 --dry-run 预览，再正式生成）",
+      "查看当前源码版本：node .\\codegen.js --version",
+      "查看某条命令：node .\\codegen.js aquasage --help",
+      "安装为依赖后：pnpm exec aquasage-codegen aquasage --help",
+      "如果 aquasage 帮助中没有 --dry-run，说明运行的不是当前 3.1.0 源码或安装包。",
+    ]),
+  );
 
 program
   .command("aquasage")
-  .description("从 OpenAPI 确定性生成 zdwp-aquasage-web 工程名录 CRUD")
+  .description("从 OpenAPI 确定性生成 zdwp-aquasage-web CRUD 页面")
   .requiredOption(
     "-s, --swagger <url-or-file>",
     "OpenAPI URL 或本地 JSON/YAML 文件",
@@ -46,11 +58,43 @@ program
   .option("--title <text>", "业务中文名称")
   .option("--all", "生成契约中的全部可识别资源", false)
   .option("--with-attachment", "存在 std_code/project_code 时生成附件页", false)
+  .option("--reference-view <path>", "参考业务模块目录或 list/index.vue")
+  .option("--target-parent <route-path>", "目标父路由路径")
+  .option(
+    "--menu-mode <mode>",
+    "菜单模式：reference、resource 或 parent",
+    "reference",
+  )
+  .option("--service-group <path>", "src/service/api 下的输出分组")
+  .option("--type-group <path>", "src/typings/api 下的输出分组")
+  .option("--config-group <path>", "src/config 下的字段配置分组")
+  .option("--type-namespace <name>", "Api 下的 TypeScript 命名空间")
+  .option("--attachment-service <path>", "共享附件 Service 导入路径")
+  .option("--permission <key>", "新业务资源的权限标识")
+  .option("--order <number>", "新业务资源的菜单排序")
+  .option("--active-menu <route-name>", "隐藏页面激活的菜单路由名")
+  .option("--create-parent", "为目标父路由补充标题和菜单元数据", false)
+  .option("--parent-title <text>", "新父路由中文标题")
+  .option("--parent-icon <icon>", "新父路由图标")
+  .option("--parent-order <number>", "新父路由菜单排序")
+  .option("--parent-permission <key>", "新父路由权限标识")
   .option("--dry-run", "只输出计划和文件列表，不写入目标项目", false)
   .option("--force", "备份人工修改后强制覆盖", false)
   .option("--no-routes", "不更新 route-titles.ts 和 menu-config.ts")
   .option("--no-route-generation", "不执行目标项目的 pnpm gen-route")
   .option("--no-check", "不执行生成前后的 vue-tsc 诊断增量检查")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景 1：先预览，绝不写文件（第一次使用最推荐）",
+      '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "D:\\workCode\\知识库\\zdwp-aquasage-web" -m "水体相关" --dry-run',
+      "场景 2：确认预览后正式生成到默认工程名录",
+      '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "D:\\workCode\\知识库\\zdwp-aquasage-web" -m "水体相关"',
+      "场景 3：生成到指定父路由（i18n 项目先跳过配置式路由）",
+      '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "." --resource "/api/v1/hyo/river" --title "河流" --reference-view "src/views/knowledge-engineering/spatial-element/river-system/rivers" --target-parent "/knowledge-engineering/spatial-element/river-system" --no-routes',
+      "说明：--dry-run 只做读取、规划和格式化，不写业务文件、路由或 .codegen 元数据。",
+    ]),
+  )
   .action(async (options) => {
     if (!options.all && !options.resource && !options.module && !options.slug) {
       throw new Error(
@@ -62,16 +106,23 @@ program
 
     console.log(`🚀 读取 OpenAPI: ${options.swagger}`);
     const document = await loadSwagger(options.swagger);
-    const plans = planAquaSageResources(document, {
+    let plans = planAquaSageResources(document, {
       resource: options.resource,
       tag: options.module,
       slug: options.slug,
       title: options.title,
       withAttachment: options.withAttachment,
     });
+    plans = await configureAquaSagePlans(
+      options.project,
+      plans,
+      placementOptions(options),
+    );
     console.log(`📦 已识别 ${plans.length} 个 AquaSage 业务资源`);
     for (const plan of plans) {
-      console.log(`  - ${plan.resource.slug}: ${plan.resource.basePath}`);
+      console.log(
+        `  - ${plan.resource.slug}: ${plan.resource.basePath} -> ${plan.placement.resourceRoutePath}`,
+      );
       plan.review.forEach((item) => console.log(`    ⚠ ${item}`));
     }
 
@@ -112,9 +163,39 @@ program
   .option("--titles <json-file>", "按 slug 覆盖标题的 JSON 文件")
   .option("--all", "同步契约中的全部可识别资源", false)
   .option("--with-attachment", "同步附件页标题", false)
+  .option("--reference-view <path>", "与生成页面相同的参考业务模块")
+  .option("--target-parent <route-path>", "与生成页面相同的目标父路由")
+  .option(
+    "--menu-mode <mode>",
+    "菜单模式：reference、resource 或 parent",
+    "reference",
+  )
+  .option("--service-group <path>", "Service 输出分组")
+  .option("--type-group <path>", "类型输出分组")
+  .option("--config-group <path>", "字段配置输出分组")
+  .option("--type-namespace <name>", "Api 类型命名空间")
+  .option("--attachment-service <path>", "共享附件 Service 导入路径")
+  .option("--permission <key>", "业务资源权限标识")
+  .option("--order <number>", "业务资源菜单排序")
+  .option("--active-menu <route-name>", "隐藏页面激活的菜单路由名")
+  .option("--create-parent", "同步新父路由标题", false)
+  .option("--parent-title <text>", "新父路由中文标题")
+  .option("--parent-icon <icon>", "新父路由图标")
+  .option("--parent-order <number>", "新父路由菜单排序")
+  .option("--parent-permission <key>", "新父路由权限标识")
   .option("--dry-run", "只检查并输出计划，不生成路由或修改文件", false)
   .option("--force", "覆盖已经人工修改的中文标题", false)
   .option("--no-route-generation", "不执行 pnpm exec sa gen-route")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景 1：只检查标题计划，不生成路由、不修改 zh-cn.ts",
+      '  node .\\codegen.js sync-zh-cn -s ".\\openapi.json" -p "." -m "水体相关" --dry-run',
+      "场景 2：正式生成 Elegant Router 路由并补中文标题",
+      '  node .\\codegen.js sync-zh-cn -s ".\\openapi.json" -p "." -m "水体相关"',
+      "注意：aquasage 使用过哪些落位参数，这里必须原样重复，否则路由 key 对不上。",
+    ]),
+  )
   .action(async (options) => {
     if (!options.all && !options.resource && !options.module && !options.slug) {
       throw new Error(
@@ -129,7 +210,7 @@ program
 
     console.log(`🚀 读取 OpenAPI: ${options.swagger}`);
     const document = await loadSwagger(options.swagger);
-    const plans = planAquaSageResources(document, {
+    let plans = planAquaSageResources(document, {
       resource: options.resource,
       tag: options.module,
       slug: options.slug,
@@ -158,6 +239,12 @@ program
         }
       }
     }
+
+    plans = await configureAquaSagePlans(
+      options.project,
+      plans,
+      placementOptions(options),
+    );
 
     console.log(`📦 将同步 ${plans.length} 个 AquaSage 业务资源`);
     plans.forEach((plan) =>
@@ -203,9 +290,20 @@ program
   .description("分析 OpenAPI 的 CRUD 完整度，输出带证据和置信度的生成计划")
   .requiredOption("-s, --swagger <url-or-file>", "OpenAPI URL 或本地文件")
   .option("-o, --output <path>", "分析报告输出路径", "codegen-plan.json")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景：生成前先检查每个模块的 CRUD 是否齐全",
+      '  node .\\codegen.js analyze -s ".\\openapi.json" -o ".\\codegen-plan.json"',
+      "输出只是一份分析 JSON，不会修改 zdwp-aquasage-web。",
+    ]),
+  )
   .action(async ({ swagger, output }) => {
     const document = await loadSwagger(swagger);
     const plan = analyzeContract(groupByTag(document));
+    await fs.promises.mkdir(path.dirname(path.resolve(output)), {
+      recursive: true,
+    });
     await fs.promises.writeFile(output, JSON.stringify(plan, null, 2), "utf8");
     console.log(`✅ 生成计划已保存: ${output}`);
     console.log(
@@ -219,6 +317,14 @@ program
   .requiredOption("-s, --swagger <url-or-file>", "OpenAPI URL 或本地文件")
   .option("-m, --module <tag>", "仅规划指定模块")
   .option("-o, --output <path>", "UI 计划输出路径", "ui-plan.json")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景：查看“水体相关”的字段、控件、校验和分页推导结果",
+      '  node .\\codegen.js plan -s ".\\openapi.json" -m "水体相关" -o ".\\ui-plan-hyo.json"',
+      "不传 -m 时会为所有 tag 输出计划；该命令不会生成 Vue 页面。",
+    ]),
+  )
   .action(async ({ swagger, module: targetModule, output }) => {
     const document = await loadSwagger(swagger);
     const groups = groupByTag(document);
@@ -248,7 +354,10 @@ program
 program
   .command("api")
   .description("从 Swagger 生成 API 和类型文件（可同时生成页面）")
-  .requiredOption("-s, --swagger <url>", "Swagger 文档 URL")
+  .requiredOption(
+    "-s, --swagger <url-or-file>",
+    "OpenAPI URL 或本地 JSON/YAML 文件",
+  )
   .option("-o, --output <dir>", "输出目录", "./src/api")
   .option("-m, --module <tag>", "指定模块 tag")
   .option("-t, --template <path>", "参考列表页模板路径（提供则同时生成页面）")
@@ -261,6 +370,17 @@ program
   .option("--api-import-path <path>", "API 导入路径前缀", "@/api/modules")
   .option("--ui-plan <path>", "确定性 UI 计划 JSON")
   .option("--force", "备份人工修改后强制覆盖", false)
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景 1：仅生成某个 tag 的 API 与独立类型文件（不调用 LLM）",
+      '  node .\\codegen.js api -s ".\\openapi.json" -m "水体相关" -o ".\\src\\api"',
+      "场景 2：不传 -m，为 Swagger 中全部 tag 生成 API 与类型",
+      '  node .\\codegen.js api -s ".\\openapi.json" -o ".\\src\\api"',
+      "场景 3：提供 -t 时，会继续进入参考模板页面生成流程（需要 LLM）",
+      '  node .\\codegen.js api -s ".\\openapi.json" -m "政策相关" -o ".\\src\\api" -t "D:\\ref-project\\list\\index.vue" -p ".\\src\\views"',
+    ]),
+  )
   .action(async (options) => {
     const {
       swagger,
@@ -271,6 +391,16 @@ program
       pageOutput,
       apiImportPath,
     } = options;
+    if (template && !targetModule) {
+      throw new Error(
+        "api 使用 -t 生成页面时必须同时提供 -m，只能为一个 tag 生成页面",
+      );
+    }
+    if (!template && (formTemplate || options.uiPlan)) {
+      throw new Error(
+        "--form-template 和 --ui-plan 只能与 -t/--template 一起使用",
+      );
+    }
     console.log(`🚀 加载 Swagger: ${swagger}`);
     const swaggerDoc = await loadSwagger(swagger);
     const groups = groupByTag(swaggerDoc);
@@ -352,7 +482,6 @@ program
     // 如果提供了模板，同时生成页面
     if (template && generatedModuleName) {
       console.log("📄 开始生成页面...");
-      const apiFile = path.join(apiDir, `${generatedModuleName}.ts`);
       const moduleName = generatedModuleName;
       const typesDirPath = path.join(output, "types");
       const skeleton = extractSkeletonFromFiles(
@@ -360,8 +489,17 @@ program
         typesDirPath,
         moduleName,
       );
-      const uiPlan =
+      let uiPlan =
         uiPlans.find((item) => item.module.name === moduleName) || null;
+      if (options.uiPlan) {
+        const loadedUiPlan = JSON.parse(
+          await fs.promises.readFile(path.resolve(options.uiPlan), "utf8"),
+        );
+        uiPlan =
+          loadedUiPlan?.plans?.find(
+            (item) => item.module?.name === moduleName,
+          ) || loadedUiPlan;
+      }
       const viewDir = pageOutput || "./src/views";
       await generatePages({
         skeleton,
@@ -383,8 +521,18 @@ program
   .description("分析参考页面代码，生成风格规范")
   .argument("<file>", "列表页文件路径")
   .option("-o, --output <path>", "风格规范输出路径", "style-guide.yaml")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景：把一个参考列表页分析为可复用的风格说明（需要 LLM）",
+      '  node .\\codegen.js style "D:\\ref-project\\list\\index.vue" -o ".\\style-guide.yaml"',
+    ]),
+  )
   .action(async (file, options) => {
     const yamlContent = await analyzeStyle(file);
+    await fs.promises.mkdir(path.dirname(path.resolve(options.output)), {
+      recursive: true,
+    });
     await fs.promises.writeFile(options.output, yamlContent);
     console.log(`📁 风格规范已保存到 ${options.output}`);
   });
@@ -406,6 +554,14 @@ program
   .option("--api-import-path <path>", "API 导入路径前缀", "@/api/modules")
   .option("--ui-plan <path>", "确定性 UI 计划 JSON")
   .option("--force", "备份人工修改后强制覆盖", false)
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景：API 已经生成，只基于参考模板生成页面（需要 LLM）",
+      '  node .\\codegen.js page --api-file ".\\src\\api\\modules\\policy.ts" -t "D:\\ref-project\\list\\index.vue" -o ".\\src\\views"',
+      "如果已有 ui-plan.json，建议同时传 --ui-plan，减少字段猜测。",
+    ]),
+  )
   .action(async (options) => {
     const {
       apiFile,
@@ -454,7 +610,7 @@ program
 program
   .command("generate")
   .description("全流程：生成 API + 类型，然后生成页面")
-  .requiredOption("-s, --swagger <url>", "Swagger 文档 URL")
+  .option("-s, --swagger <url-or-file>", "OpenAPI URL 或本地 JSON/YAML 文件")
   .requiredOption("-m, --module <tag>", "模块 tag（如 User）")
   .requiredOption("-t, --template <path>", "参考列表页模板路径")
   .option("--form-template <path>", "参考表单组件模板路径")
@@ -466,8 +622,18 @@ program
     "style-guide.yaml",
   )
   .option("--skip-api", "跳过 API 生成（如果已经生成）")
+  .option("--api-module <name>", "--skip-api 时已有 API/类型文件的同名文件名")
   .option("--api-import-path <path>", "API 导入路径前缀", "@/api/modules")
   .option("--force", "备份人工修改后强制覆盖", false)
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景：一次完成 API、类型、风格分析和页面生成（页面阶段需要 LLM）",
+      '  node .\\codegen.js generate -s ".\\openapi.json" -m "政策相关" -t "D:\\ref-project\\list\\index.vue" --api-output ".\\src\\api" -o ".\\src\\views"',
+      "已有 modules/policy.ts 和 types/policy.d.ts 时：添加 --skip-api --api-module policy，并可省略 -s。",
+      "AquaSage 正式 CRUD 页面优先使用 aquasage；generate 是保留的模板实验链路。",
+    ]),
+  )
   .action(async (options) => {
     const {
       swagger,
@@ -478,9 +644,22 @@ program
       apiOutput,
       styleGuide,
       skipApi,
+      apiModule,
       apiImportPath,
       force,
     } = options;
+
+    if (!skipApi && !swagger) {
+      throw new Error("未使用 --skip-api 时必须提供 -s/--swagger");
+    }
+    if (skipApi && !apiModule) {
+      throw new Error(
+        "使用 --skip-api 时必须提供 --api-module，例如 --api-module policy",
+      );
+    }
+    if (!skipApi && apiModule) {
+      throw new Error("--api-module 只能与 --skip-api 一起使用");
+    }
 
     // 1. 生成 API/类型（除非跳过）
     if (!skipApi) {
@@ -563,7 +742,7 @@ program
 
     // 3. 从生成的文件中提取骨架
     console.log("📊 从 API 文件中提取接口骨架...");
-    const moduleLower = options.generatedModuleName || module.toLowerCase();
+    const moduleLower = options.generatedModuleName || apiModule;
     const apiModulesDir = path.join(apiOutput, "modules");
     const apiTypesDir = path.join(apiOutput, "types");
     const skeleton = extractSkeletonFromFiles(
@@ -591,6 +770,31 @@ program.parseAsync().catch((error) => {
   console.error(`❌ ${error.message}`);
   process.exitCode = 1;
 });
+
+function placementOptions(options) {
+  return {
+    referenceView: options.referenceView,
+    targetParent: options.targetParent,
+    menuMode: options.menuMode,
+    serviceGroup: options.serviceGroup,
+    typeGroup: options.typeGroup,
+    configGroup: options.configGroup,
+    typeNamespace: options.typeNamespace,
+    attachmentService: options.attachmentService,
+    permission: options.permission,
+    order: options.order,
+    activeMenu: options.activeMenu,
+    createParent: options.createParent,
+    parentTitle: options.parentTitle,
+    parentIcon: options.parentIcon,
+    parentOrder: options.parentOrder,
+    parentPermission: options.parentPermission,
+  };
+}
+
+function helpBlock(lines) {
+  return `\n使用示例与提示：\n${lines.join("\n")}\n`;
+}
 
 function throwIfWriteConflicts(writeReport) {
   const conflicts = writeReport.report.files.filter(
