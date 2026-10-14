@@ -2,3 +2,7 @@ node_modules
 .pnpm-store/
 .env
 codegen-plan.json
+
+# 工具/助手的工作产物，不属于项目源码
+.workbuddy/
+.codebuddy/

@@ -106,7 +106,17 @@ plan.placement = {
 
 ### 4.1 保留旧命令兼容
 
-不传任何新参数时，解析器仍使用工程名录预设：
+不传任何新参数时，解析器按 API 路径推导模块段（`api/v1` 之后第一段，如 `/api/v1/space/district` → `space`）：
+
+```text
+父路由：/knowledge-engineering/<模块>
+Service 分组：<模块>
+类型分组：<模块>
+配置分组：<模块>
+类型命名空间：<模块的大驼峰>
+```
+
+API 路径中没有模块段时，回退工程名录预设：
 
 ```text
 父路由：/knowledge-engineering/engineering-catalog
@@ -115,7 +125,7 @@ Service 分组：engineering-catalog
 类型命名空间：EngineeringCatalog
 ```
 
-所以原来的命令不需要改，新能力是显式增加的，不是破坏旧流程。
+路径推导是确定性规则，原来的命令不需要改参数；显式落位参数（`--target-parent`、`--reference-view`、`--service-group` 等）仍然优先于推导结果。
 
 ### 4.2 静态分析参考模块
 
@@ -187,7 +197,7 @@ plans = await configureAquaSagePlans(
 );
 ```
 
-为什么 `sync-zh-cn` 也必须执行落位解析？因为中文标题 key 来自最终路由名。如果第二条命令不知道 `--target-parent`，它只能算出默认工程名录 key，自然匹配不到已生成路由。
+为什么 `sync-zh-cn` 也必须执行落位解析？因为中文标题 key 来自最终路由名。第二条命令按同一确定性规则推导（`--target-parent` 显式传入时用显式值，否则按 API 路径模块段推导），不需要人工记忆落位参数。
 
 ## 6. 第三步：让渲染器只消费计划
 
@@ -197,7 +207,7 @@ plans = await configureAquaSagePlans(
 placementOf(plan);
 ```
 
-新计划直接返回 `plan.placement`；旧测试或旧调用未配置 placement 时，返回工程名录兼容值。
+新计划直接返回 `plan.placement`；旧测试或旧调用未配置 placement 时，按 API 路径模块段推导兼容值，无模块段时返回工程名录兼容值。
 
 随后逐项替换硬编码：
 

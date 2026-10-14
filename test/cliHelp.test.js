@@ -36,6 +36,8 @@ test("aquasage help documents dry-run and safe first-run example", () => {
 test("every CLI command provides a beginner example", () => {
   const commands = [
     "aquasage",
+    "aquasage-api",
+    "aquasage-pages",
     "sync-zh-cn",
     "analyze",
     "plan",
@@ -53,9 +55,9 @@ test("every CLI command provides a beginner example", () => {
 
 test("root help explains how to detect an old CLI package", () => {
   const help = runCli("--help");
-  assert.match(help, /3\.1\.0/);
+  assert.match(help, /3\.10\.0/);
   assert.match(help, /没有 --dry-run/);
-  assert.equal(runCli("--version").trim(), "3.1.0");
+  assert.equal(runCli("--version").trim(), "3.10.0");
 });
 
 test("CLI rejects option combinations that used to be silently ignored", () => {

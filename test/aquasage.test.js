@@ -6,7 +6,11 @@ import path from "path";
 import { planAquaSageResources } from "../lib/aquasage/planner.js";
 import { renderAquaSageFiles } from "../lib/aquasage/renderer.js";
 import { generateAquaSageProject } from "../lib/aquasage/projectGenerator.js";
-import { patchAquaSageRoutes } from "../lib/aquasage/routePatcher.js";
+import {
+  patchAquaSageRoutes,
+  patchElegantRouteTitles,
+} from "../lib/aquasage/routePatcher.js";
+import { matchDevCommandLine } from "../lib/aquasage/validator.js";
 import { configureAquaSagePlans } from "../lib/aquasage/placementResolver.js";
 
 const document = {
@@ -180,6 +184,59 @@ const document = {
         },
       },
     },
+    "/api/v1/prj/pumping-station/options": {
+      get: {
+        tags: ["水利工程"],
+        operationId: "list_pumping_station_options",
+        summary: "查询泵站下拉列表",
+        parameters: [
+          {
+            name: "city_code",
+            in: "query",
+            schema: { anyOf: [{ type: "string" }, { type: "null" }] },
+          },
+          {
+            name: "keyword",
+            in: "query",
+            schema: { type: "string", description: "名称模糊匹配" },
+          },
+        ],
+        responses: {
+          200: {
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ResultListPumpingStationOption",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/v1/prj/pumping-station/import": {
+      post: {
+        tags: ["水利工程"],
+        operationId: "import_pumping_station",
+        summary: "导入泵站信息",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/PumpingStationImportBody" },
+            },
+          },
+        },
+        responses: {
+          200: {
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { ok: { type: "boolean" } } },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -232,6 +289,40 @@ const document = {
         type: "object",
         properties: { id: { type: "integer" }, name: { type: "string" } },
       },
+      ResultListPumpingStationOption: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          data: {
+            anyOf: [
+              {
+                type: "array",
+                items: { $ref: "#/components/schemas/PumpingStationOption" },
+              },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+      PumpingStationOption: {
+        type: "object",
+        properties: {
+          id: { type: "integer", description: "主键ID" },
+          name: { type: "string", description: "泵站名称" },
+          children: {
+            type: "array",
+            items: { $ref: "#/components/schemas/PumpingStationOption" },
+          },
+        },
+      },
+      PumpingStationImportBody: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: { type: "string", description: "文件路径" },
+          overwrite: { type: "boolean", description: "是否覆盖" },
+        },
+      },
     },
   },
 };
@@ -265,6 +356,130 @@ test("builds AquaSage pagination, detail key and field conventions", () => {
   assert.equal(plan.attachment.refField, "std_code");
 });
 
+test("generates service functions, types and fields for every non-CRUD endpoint", () => {
+  const [plan] = planAquaSageResources(document, {
+    resource: "/api/v1/prj/pumping-station",
+    title: "泵站",
+  });
+  assert.deepEqual(
+    plan.extraOperations.map((extra) => extra.action).sort(),
+    ["Import", "Options"],
+  );
+  const files = renderAquaSageFiles(plan);
+  const service = files["src/service/api/prj/pumping-station.ts"];
+  const types = files["src/typings/api/prj/pumpingStation.d.ts"];
+  const config = files["src/config/prj/pumping-station-fields.ts"];
+
+  assert.match(service, /export function fetchGetPrjPumpingStationOptions/);
+  assert.match(service, /export function fetchPostPrjPumpingStationImport/);
+  assert.match(service, /Api\.Prj\.PumpingStation\.OptionsItem\[\]/);
+  assert.match(service, /Api\.Prj\.PumpingStation\.ImportPayload/);
+  assert.match(types, /interface OptionsParams/);
+  assert.match(types, /interface OptionsItem/);
+  assert.match(types, /interface ImportPayload/);
+  // 自引用 children 只展开一层，不无限递归
+  assert.match(types, /children\?: unknown\[\]/);
+  assert.match(config, /export const optionsFields: FormField\[\] = \[/);
+  assert.match(config, /export const importFields: FormField\[\] = \[/);
+  // 主 CRUD 函数保持不变
+  assert.match(service, /export function fetchGetPrjPumpingStationList/);
+  assert.match(service, /export function fetchDeletePrjPumpingStation/);
+});
+
+test("keeps the parent schema description for anyOf-wrapped fields", () => {
+  const withAnyOf = {
+    ...document,
+    components: {
+      schemas: {
+        ...document.components.schemas,
+        PrjPumpingStation: {
+          ...document.components.schemas.PrjPumpingStation,
+          properties: {
+            ...document.components.schemas.PrjPumpingStation.properties,
+            name: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+              title: "Name",
+              description: "泵站名称",
+            },
+          },
+        },
+      },
+    },
+  };
+  const [plan] = planAquaSageResources(withAnyOf, {
+    resource: "/api/v1/prj/pumping-station",
+    title: "泵站",
+  });
+  const formField = plan.form.fields.find((field) => field.name === "name");
+  assert.equal(formField.label, "泵站名称");
+  const tableField = plan.list.tableFields.find(
+    (field) => field.name === "name",
+  );
+  assert.equal(tableField.label, "泵站名称");
+});
+
+test("infers complete Chinese titles from schema descriptions and summaries", () => {
+  const withSchemaDesc = {
+    ...document,
+    components: {
+      schemas: {
+        ...document.components.schemas,
+        PrjPumpingStation: {
+          ...document.components.schemas.PrjPumpingStation,
+          description: "泵站信息",
+        },
+      },
+    },
+  };
+  const [fromSchema] = planAquaSageResources(withSchemaDesc, {
+    resource: "/api/v1/prj/pumping-station",
+  });
+  assert.equal(fromSchema.resource.title, "泵站");
+
+  const withLongSummary = {
+    ...document,
+    paths: {
+      ...document.paths,
+      "/api/v1/prj/pumping-station/page": {
+        ...document.paths["/api/v1/prj/pumping-station/page"],
+        get: {
+          ...document.paths["/api/v1/prj/pumping-station/page"].get,
+          summary: "根据入参分页查询泵站信息",
+        },
+      },
+    },
+  };
+  const [fromSummary] = planAquaSageResources(withLongSummary, {
+    resource: "/api/v1/prj/pumping-station",
+  });
+  assert.equal(fromSummary.resource.title, "泵站");
+
+  const withIdSummary = {
+    ...document,
+    paths: {
+      ...document.paths,
+      "/api/v1/prj/pumping-station/detail": {
+        ...document.paths["/api/v1/prj/pumping-station/detail"],
+        get: {
+          ...document.paths["/api/v1/prj/pumping-station/detail"].get,
+          summary: "根据id查询泵站详情",
+        },
+      },
+      "/api/v1/prj/pumping-station/page": {
+        ...document.paths["/api/v1/prj/pumping-station/page"],
+        get: {
+          ...document.paths["/api/v1/prj/pumping-station/page"].get,
+          summary: undefined,
+        },
+      },
+    },
+  };
+  const [fromIdSummary] = planAquaSageResources(withIdSummary, {
+    resource: "/api/v1/prj/pumping-station",
+  });
+  assert.equal(fromIdSummary.resource.title, "泵站");
+});
+
 test("renders only zdwp-aquasage-web file conventions", () => {
   const [plan] = planAquaSageResources(document, {
     resource: "/api/v1/prj/pumping-station",
@@ -272,16 +487,16 @@ test("renders only zdwp-aquasage-web file conventions", () => {
     withAttachment: true,
   });
   const files = renderAquaSageFiles(plan);
-  assert.ok(files["src/service/api/engineering-catalog/pumping-station.ts"]);
-  assert.ok(files["src/config/engineering/pumping-station-fields.ts"]);
+  assert.ok(files["src/service/api/prj/pumping-station.ts"]);
+  assert.ok(files["src/config/prj/pumping-station-fields.ts"]);
   assert.ok(
     files[
-      "src/views/knowledge-engineering/engineering-catalog/pumping-station/list/index.vue"
+      "src/views/knowledge-engineering/prj/pumping-station/list/index.vue"
     ],
   );
   assert.ok(
     files[
-      "src/views/knowledge-engineering/engineering-catalog/pumping-station/attachment/index.vue"
+      "src/views/knowledge-engineering/prj/pumping-station/attachment/index.vue"
     ],
   );
   assert.equal(
@@ -294,7 +509,7 @@ test("renders only zdwp-aquasage-web file conventions", () => {
   );
   assert.match(
     files[
-      "src/views/knowledge-engineering/engineering-catalog/pumping-station/detail/index.vue"
+      "src/views/knowledge-engineering/prj/pumping-station/detail/index.vue"
     ],
     /project_code: String\(params\.id\)/,
   );
@@ -338,12 +553,7 @@ test("dry-run validates the target and formats every generated file without writ
     assert.equal(result.dryRun, true);
     assert.equal(result.files.length, 5);
     await assert.rejects(
-      fs.access(
-        path.join(
-          root,
-          "src/service/api/engineering-catalog/pumping-station.ts",
-        ),
-      ),
+      fs.access(path.join(root, "src/service/api/prj/pumping-station.ts")),
     );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -399,7 +609,7 @@ test("writes copy-ready AquaSage files and is stable on the second run", async (
     );
     const listPath = path.join(
       root,
-      "src/views/knowledge-engineering/engineering-catalog/pumping-station/list/index.vue",
+      "src/views/knowledge-engineering/prj/pumping-station/list/index.vue",
     );
     assert.match(await fs.readFile(listPath, "utf8"), /useNaivePaginatedTable/);
   } finally {
@@ -436,6 +646,144 @@ test("patches route metadata once and preserves backups outside src", async () =
     );
     const second = await patchAquaSageRoutes(root, plan);
     assert.equal(second.routeTitles.action, "unchanged");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("patches module-derived parent title and elegant routes placeholders", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aquasage-titles-"));
+  try {
+    const routerDir = path.join(root, "src/router");
+    await fs.mkdir(path.join(routerDir, "elegant"), { recursive: true });
+    await fs.writeFile(
+      path.join(routerDir, "route-titles.ts"),
+      "export const routeTitleMap = {\n  'home': '首页',\n}\n",
+    );
+    await fs.writeFile(
+      path.join(routerDir, "menu-config.ts"),
+      "export const menuConfig = {\n  'home': {},\n}\n",
+    );
+    await fs.writeFile(
+      path.join(routerDir, "elegant", "routes.ts"),
+      `export const generatedRoutes = [
+  {
+    name: 'knowledge-engineering_prj',
+    path: '/knowledge-engineering/prj',
+    meta: { title: 'knowledge-engineering_prj' },
+    children: [
+      {
+        name: 'knowledge-engineering_prj_pumping-station',
+        path: '/knowledge-engineering/prj/pumping-station',
+        meta: { title: 'knowledge-engineering_prj_pumping-station' },
+        children: [
+          {
+            name: 'knowledge-engineering_prj_pumping-station_list',
+            path: '/knowledge-engineering/prj/pumping-station/list',
+            meta: { title: 'knowledge-engineering_prj_pumping-station_list' }
+          },
+          {
+            name: 'knowledge-engineering_prj_pumping-station_detail',
+            path: '/knowledge-engineering/prj/pumping-station/detail',
+            meta: { title: '知识档案' }
+          }
+        ]
+      }
+    ]
+  }
+]
+`,
+    );
+    const plans = await configureAquaSagePlans(
+      root,
+      planAquaSageResources(document, {
+        resource: "/api/v1/prj/pumping-station",
+        title: "泵站",
+      }),
+      {},
+    );
+
+    // 1. 模块推导的父路由用 Swagger tag 名补 route-titles
+    await patchAquaSageRoutes(root, plans[0]);
+    const titles = await fs.readFile(
+      path.join(routerDir, "route-titles.ts"),
+      "utf8",
+    );
+    assert.match(titles, /knowledge-engineering_prj["']\s*:\s*["']水利工程/);
+
+    // 1b. 推导父路由也可以带图标（写入 menu-config，dev 再生成时合并进 routes.ts）
+    const withIcon = await configureAquaSagePlans(
+      root,
+      planAquaSageResources(document, {
+        resource: "/api/v1/prj/pumping-station",
+        title: "泵站",
+      }),
+      { parentIcon: "mdi:waves" },
+    );
+    await patchAquaSageRoutes(root, withIcon[0]);
+    const menus = await fs.readFile(
+      path.join(routerDir, "menu-config.ts"),
+      "utf8",
+    );
+    assert.match(
+      menus,
+      /knowledge-engineering_prj["']\s*:\s*\{\s*icon:\s*["']mdi:waves["']/,
+    );
+
+    // 2. elegant/routes.ts 占位标题补全为中文，人工中文保留
+    const first = await patchElegantRouteTitles(root, plans);
+    assert.equal(first.action, "updated");
+    const routes = await fs.readFile(
+      path.join(routerDir, "elegant", "routes.ts"),
+      "utf8",
+    );
+    assert.match(routes, /title: "水利工程"/);
+    assert.match(routes, /title: "泵站"/);
+    assert.match(routes, /title: "泵站列表"/);
+    assert.match(routes, /title: '知识档案'/);
+    assert.doesNotMatch(
+      routes,
+      /title: 'knowledge-engineering_prj_pumping-station_detail'/,
+    );
+
+    const second = await patchElegantRouteTitles(root, plans);
+    assert.equal(second.action, "unchanged");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("detects a running vite dev server for the project", () => {
+  const output = [
+    "C:\\Program Files\\nodejs\\node.exe something",
+    "node D:\\workCode\\知识库\\zdwp-aquasage-web\\node_modules\\vite\\bin\\vite.js --mode test",
+    "node C:\\other\\project\\node_modules\\vite\\bin\\vite.js",
+  ].join("\n");
+  assert.match(
+    matchDevCommandLine(output, "D:/workCode/知识库/zdwp-aquasage-web"),
+    /vite\.js --mode test/,
+  );
+  assert.equal(matchDevCommandLine(output, "D:/other/project"), null);
+  assert.equal(matchDevCommandLine("node something", "D:/x"), null);
+});
+
+test("skips elegant route title patching when the file is unparseable", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aquasage-broken-"));
+  try {
+    const elegantDir = path.join(root, "src/router/elegant");
+    await fs.mkdir(elegantDir, { recursive: true });
+    const broken = "export const generatedRoutes = [\n  {\n    name: 'broken',\n    title: 'unterminated\n";
+    const filePath = path.join(elegantDir, "routes.ts");
+    await fs.writeFile(filePath, broken, "utf8");
+    const [plan] = planAquaSageResources(document, {
+      resource: "/api/v1/prj/pumping-station",
+      title: "泵站",
+    });
+    const result = await patchElegantRouteTitles(root, [plan]);
+    assert.equal(result.action, "skipped");
+    assert.match(result.reason, /无法解析/);
+    // 坏文件原样保留，没有被继续写坏
+    assert.equal(await fs.readFile(filePath, "utf8"), broken);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

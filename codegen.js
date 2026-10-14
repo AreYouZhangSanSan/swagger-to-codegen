@@ -22,13 +22,20 @@ import { createIncrementalWriter } from "./lib/incrementalWriter.js";
 import { buildUiPlan } from "./lib/uiPlanner.js";
 import { planAquaSageResources } from "./lib/aquasage/planner.js";
 import { generateAquaSageProject } from "./lib/aquasage/projectGenerator.js";
+import { renderAquaSageApiFiles } from "./lib/aquasage/renderer.js";
 import { syncZhCnRouteTitles } from "./lib/aquasage/localeSynchronizer.js";
 import { configureAquaSagePlans } from "./lib/aquasage/placementResolver.js";
+import {
+  deriveResourceOutputDir,
+  ensureProjectApiFiles,
+  loadAquaSagePlans,
+  saveAquaSagePlans,
+} from "./lib/aquasage/planStore.js";
 
 program
   .name("codegen")
   .description("zdwp-aquasage-web 专用 CRUD 代码生成工具")
-  .version("3.1.0")
+  .version("3.10.0")
   .showHelpAfterError("可执行 node .\\codegen.js <命令> --help 查看完整参数。")
   .addHelpText(
     "after",
@@ -37,7 +44,7 @@ program
       "查看当前源码版本：node .\\codegen.js --version",
       "查看某条命令：node .\\codegen.js aquasage --help",
       "安装为依赖后：pnpm exec aquasage-codegen aquasage --help",
-      "如果 aquasage 帮助中没有 --dry-run，说明运行的不是当前 3.1.0 源码或安装包。",
+      "如果 aquasage 帮助中没有 --dry-run，说明运行的不是当前 3.10.0 源码或安装包。",
     ]),
   );
 
@@ -61,6 +68,10 @@ program
   .option("--reference-view <path>", "参考业务模块目录或 list/index.vue")
   .option("--target-parent <route-path>", "目标父路由路径")
   .option(
+    "--view-dir <path>",
+    "页面代码输出目录（可选，默认随菜单路由；与菜单解耦时建议配合 --no-routes）",
+  )
+  .option(
     "--menu-mode <mode>",
     "菜单模式：reference、resource 或 parent",
     "reference",
@@ -75,9 +86,12 @@ program
   .option("--active-menu <route-name>", "隐藏页面激活的菜单路由名")
   .option("--create-parent", "为目标父路由补充标题和菜单元数据", false)
   .option("--parent-title <text>", "新父路由中文标题")
-  .option("--parent-icon <icon>", "新父路由图标")
-  .option("--parent-order <number>", "新父路由菜单排序")
-  .option("--parent-permission <key>", "新父路由权限标识")
+  .option(
+    "--parent-icon <icon>",
+    "父路由图标（新建父路由或为按路径推导的父路由补充图标）",
+  )
+  .option("--parent-order <number>", "父路由菜单排序")
+  .option("--parent-permission <key>", "父路由权限标识")
   .option("--dry-run", "只输出计划和文件列表，不写入目标项目", false)
   .option("--force", "备份人工修改后强制覆盖", false)
   .option("--no-routes", "不更新 route-titles.ts 和 menu-config.ts")
@@ -92,6 +106,9 @@ program
       '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "D:\\workCode\\知识库\\zdwp-aquasage-web" -m "水体相关"',
       "场景 3：生成到指定父路由（i18n 项目先跳过配置式路由）",
       '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "." --resource "/api/v1/hyo/river" --title "河流" --reference-view "src/views/knowledge-engineering/spatial-element/river-system/rivers" --target-parent "/knowledge-engineering/spatial-element/river-system" --no-routes',
+      "场景 4：菜单落位与页面目录解耦（页面代码放自定义目录，菜单仍在空间元素下）",
+      '  node .\\codegen.js aquasage -s ".\\openapi.json" -p "." -m "河流" --target-parent "/knowledge-engineering/spatial-element/river-system" --slug rivers --title "河流" --view-dir "src/views/custom/rivers" --no-routes',
+      "分步生成：aquasage-api（只生成 Service 与类型）→ aquasage-pages（再生成页面与路由）",
       "说明：--dry-run 只做读取、规划和格式化，不写业务文件、路由或 .codegen 元数据。",
     ]),
   )
@@ -123,6 +140,7 @@ program
       console.log(
         `  - ${plan.resource.slug}: ${plan.resource.basePath} -> ${plan.placement.resourceRoutePath}`,
       );
+      printExtraOperations(plan);
       plan.review.forEach((item) => console.log(`    ⚠ ${item}`));
     }
 
@@ -143,6 +161,306 @@ program
       return;
     }
     console.log(`✅ AquaSage 生成完成，报告: ${result.reportPath}`);
+    console.log(
+      `类型错误基线 ${result.validation.baselineCount ?? "未检查"}，新增 ${result.validation.newDiagnostics.length}`,
+    );
+  });
+
+program
+  .command("aquasage-api")
+  .description("分步第一步：仅生成 AquaSage Service 与类型文件")
+  .requiredOption(
+    "-s, --swagger <url-or-file>",
+    "OpenAPI URL 或本地 JSON/YAML 文件",
+  )
+  .option(
+    "-p, --project <dir>",
+    "zdwp-aquasage-web 项目根目录（生成到 src/service/api 与 src/typings/api）",
+  )
+  .option(
+    "-o, --output <dir>",
+    "独立输出目录（与 -p 二选一；文件平铺为 <slug>.ts / <slug>.d.ts）",
+  )
+  .option("-r, --resource <base-path>", "API 资源基础路径")
+  .option("-m, --module <tag>", "Swagger tag；同 tag 下会继续按资源路径拆分")
+  .option("--slug <name>", "目标目录 kebab-case 名称")
+  .option("--title <text>", "业务中文名称")
+  .option("--all", "生成契约中的全部可识别资源", false)
+  .option("--with-attachment", "存在 std_code/project_code 时生成附件页", false)
+  .option("--service-group <path>", "src/service/api 下的输出分组")
+  .option("--type-group <path>", "src/typings/api 下的输出分组")
+  .option("--config-group <path>", "src/config 下的字段配置分组")
+  .option("--type-namespace <name>", "Api 下的 TypeScript 命名空间")
+  .option("--dry-run", "只输出计划和文件列表，不写入任何文件", false)
+  .option("--force", "备份人工修改后强制覆盖", false)
+  .option("--no-check", "不执行生成前后的 vue-tsc 诊断增量检查")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景 1：先预览，绝不写文件",
+      '  node .\\codegen.js aquasage-api -s "http://19.19.12.206:8000/api/v1/openapi.json" -p "D:\\workCode\\知识库\\zdwp-aquasage-web" -m "水体相关" --dry-run',
+      "场景 2：正式生成到项目标准目录（推荐，第二步 aquasage-pages 可直接接力）",
+      '  node .\\codegen.js aquasage-api -s "http://19.19.12.206:8000/api/v1/openapi.json" -p "D:\\workCode\\知识库\\zdwp-aquasage-web" -m "水体相关"',
+      "场景 3：生成到独立目录 -o（平铺 <slug>.ts / <slug>.d.ts）",
+      '  node .\\codegen.js aquasage-api -s "http://19.19.12.206:8000/api/v1/openapi.json" -m "水体相关" -o ".\\out\\api"',
+      "场景 4：不指定输出目录时按契约资源路径推导，例如 /api/v1/prj/pumping-station → .\\api\\v1\\prj\\pumping-station",
+      '  node .\\codegen.js aquasage-api -s "http://19.19.12.206:8000/api/v1/openapi.json" -m "水体相关"',
+    ]),
+  )
+  .action(async (options) => {
+    if (!options.all && !options.resource && !options.module && !options.slug) {
+      throw new Error(
+        "请提供 --resource、--module 或 --slug；只有明确使用 --all 才会生成全部资源",
+      );
+    }
+    if (options.slug && options.all)
+      throw new Error("--slug 不能与 --all 同时使用");
+    if (options.project && options.output)
+      throw new Error("-p/--project 与 -o/--output 只能二选一");
+
+    console.log(`🚀 读取 OpenAPI: ${options.swagger}`);
+    const document = await loadSwagger(options.swagger);
+    let plans = planAquaSageResources(document, {
+      resource: options.resource,
+      tag: options.module,
+      slug: options.slug,
+      title: options.title,
+      withAttachment: options.withAttachment,
+    });
+    plans = await configureAquaSagePlans(
+      options.project || process.cwd(),
+      plans,
+      placementOptions(options),
+    );
+    console.log(`📦 已识别 ${plans.length} 个 AquaSage 业务资源`);
+    for (const plan of plans) {
+      console.log(
+        `  - ${plan.resource.slug}: ${plan.resource.basePath} -> ${plan.placement.serviceFile} / ${plan.placement.typeFile}`,
+      );
+      printExtraOperations(plan);
+      plan.review.forEach((item) => console.log(`    ⚠ ${item}`));
+    }
+
+    // 项目模式：与一步 aquasage 落位相同，只写 Service 与类型，不碰路由
+    if (options.project) {
+      const result = await generateAquaSageProject({
+        projectRoot: options.project,
+        plans,
+        contractSource: options.swagger,
+        force: options.force,
+        dryRun: options.dryRun,
+        patchRoutes: false,
+        routeGeneration: false,
+        check: options.check,
+        stage: "api",
+      });
+      if (result.dryRun) {
+        console.log("🧪 Dry-run，不写入文件：");
+        result.files.forEach((file) => console.log(`  ${file}`));
+        return;
+      }
+      console.log(`✅ Service 与类型生成完成，报告: ${result.reportPath}`);
+      console.log(
+        `类型错误基线 ${result.validation.baselineCount ?? "未检查"}，新增 ${result.validation.newDiagnostics.length}`,
+      );
+      console.log(
+        `▶ 下一步：node .\\codegen.js aquasage-pages -p "${options.project}"`,
+      );
+      return;
+    }
+
+    // 独立模式：-o 单一目录，或按契约资源路径推导目录
+    for (const plan of plans) {
+      const baseDir = options.output
+        ? path.resolve(options.output)
+        : path.resolve(
+            deriveResourceOutputDir(plan.resource.basePath, plan.resource.slug),
+          );
+      const serviceName = path.basename(plan.placement.serviceFile);
+      const typesName = path.basename(plan.placement.typeFile);
+      const files = renderAquaSageApiFiles(plan);
+      const prettierConfig = await prettier.resolveConfig(process.cwd());
+      const formattedService = await prettier.format(
+        files[plan.placement.serviceFile],
+        { ...prettierConfig, parser: "typescript" },
+      );
+      const formattedTypes = await prettier.format(
+        files[plan.placement.typeFile],
+        { ...prettierConfig, parser: "typescript" },
+      );
+      const servicePath = path.join(baseDir, serviceName);
+      const typesPath = path.join(baseDir, typesName);
+      plan.stage1 = {
+        outputDir: baseDir,
+        servicePath,
+        typesPath,
+        writtenAt: new Date().toISOString(),
+      };
+      console.log(`📁 ${plan.resource.slug} -> ${baseDir}`);
+      if (options.dryRun) {
+        console.log(`  ${servicePath}`);
+        console.log(`  ${typesPath}`);
+        continue;
+      }
+      const writer = await createIncrementalWriter(baseDir, {
+        force: options.force,
+      });
+      const serviceResult = await writer.writeFile(
+        servicePath,
+        formattedService,
+        {
+          generator: "aquasage-crud",
+          contractSource: options.swagger,
+          resource: plan.resource.slug,
+        },
+      );
+      console.log(`✅ Service: ${serviceName} (${serviceResult.action})`);
+      const typesResult = await writer.writeFile(typesPath, formattedTypes, {
+        generator: "aquasage-crud",
+        contractSource: options.swagger,
+        resource: plan.resource.slug,
+      });
+      console.log(`✅ 类型: ${typesName} (${typesResult.action})`);
+      const writeReport = await writer.finalize();
+      throwIfWriteConflicts(writeReport);
+      await saveAquaSagePlans(baseDir, [plan], { scope: "standalone" });
+      console.log(
+        `🧾 计划已保存: ${path.join(baseDir, ".codegen", "plans", `${plan.resource.slug}.json`)}`,
+      );
+      console.log(`✅ 报告: ${writeReport.reportPath}`);
+    }
+    if (!options.dryRun) {
+      console.log(
+        "▶ 下一步：node .\\codegen.js aquasage-pages -p <zdwp-aquasage-web目录> --from <上面输出的目录>",
+      );
+    }
+  });
+
+program
+  .command("aquasage-pages")
+  .description("分步第二步：基于 aquasage-api 的计划文件生成页面与路由")
+  .requiredOption("-p, --project <dir>", "zdwp-aquasage-web 项目根目录")
+  .option(
+    "--from <path>",
+    "第一步计划文件或目录，可多次指定（默认读取 <项目>/.codegen/aquasage/plans）",
+    (value, previous) => previous.concat([value]),
+    [],
+  )
+  .option("--reference-view <path>", "参考业务模块目录或 list/index.vue")
+  .option("--target-parent <route-path>", "目标父路由路径")
+  .option(
+    "--view-dir <path>",
+    "页面代码输出目录（可选，默认随菜单路由；与菜单解耦时建议配合 --no-routes）",
+  )
+  .option(
+    "--menu-mode <mode>",
+    "菜单模式：reference、resource 或 parent",
+    "reference",
+  )
+  .option("--service-group <path>", "src/service/api 下的输出分组")
+  .option("--type-group <path>", "src/typings/api 下的输出分组")
+  .option("--config-group <path>", "src/config 下的字段配置分组")
+  .option("--type-namespace <name>", "Api 下的 TypeScript 命名空间")
+  .option("--attachment-service <path>", "共享附件 Service 导入路径")
+  .option("--permission <key>", "新业务资源的权限标识")
+  .option("--order <number>", "新业务资源的菜单排序")
+  .option("--active-menu <route-name>", "隐藏页面激活的菜单路由名")
+  .option("--create-parent", "为目标父路由补充标题和菜单元数据", false)
+  .option("--parent-title <text>", "新父路由中文标题")
+  .option(
+    "--parent-icon <icon>",
+    "父路由图标（新建父路由或为按路径推导的父路由补充图标）",
+  )
+  .option("--parent-order <number>", "父路由菜单排序")
+  .option("--parent-permission <key>", "父路由权限标识")
+  .option("--dry-run", "只输出计划和文件列表，不写入目标项目", false)
+  .option("--force", "备份人工修改后强制覆盖", false)
+  .option("--no-routes", "不更新 route-titles.ts 和 menu-config.ts")
+  .option("--no-route-generation", "不执行目标项目的 pnpm gen-route")
+  .option("--no-check", "不执行生成前后的 vue-tsc 诊断增量检查")
+  .addHelpText(
+    "after",
+    helpBlock([
+      "场景 1：先预览，绝不写文件",
+      '  node .\\codegen.js aquasage-pages -p "D:\\workCode\\知识库\\zdwp-aquasage-web" --dry-run',
+      "场景 2：正式生成页面与路由（计划来自 aquasage-api -p 或一步 aquasage）",
+      '  node .\\codegen.js aquasage-pages -p "D:\\workCode\\知识库\\zdwp-aquasage-web"',
+      "场景 3：aquasage-api 独立目录生成过，用 --from 接力（缺失的 API/类型会自动复制进项目）",
+      '  node .\\codegen.js aquasage-pages -p "D:\\workCode\\知识库\\zdwp-aquasage-web" --from ".\\api\\v1\\prj\\pumping-station"',
+      "场景 4：参照已有页面模块生成（分组默认沿用计划中记录的取值）",
+      '  node .\\codegen.js aquasage-pages -p "." --reference-view "src/views/knowledge-engineering/spatial-element/river-system/rivers" --target-parent "/knowledge-engineering/spatial-element/river-system" --no-routes',
+      "场景 5：页面代码目录自定义（--view-dir 只改页面目录，菜单路由仍按计划里的落位）",
+      '  node .\\codegen.js aquasage-pages -p "." --view-dir "src/views/custom/rivers" --no-routes',
+      "注意：不传 --from 时默认读取 <项目>/.codegen/aquasage/plans 下的计划文件。",
+    ]),
+  )
+  .action(async (options) => {
+    const fromEntries =
+      options.from.length > 0
+        ? options.from
+        : [path.join(options.project, ".codegen", "aquasage", "plans")];
+    let plans = await loadAquaSagePlans(fromEntries);
+
+    // 显式传了落位参数才重新解析 placement；否则直接复用计划里的记录（最稳路径）
+    if (hasPlacementOverrides(options)) {
+      const resolved = [];
+      for (const plan of plans) {
+        const [result] = await configureAquaSagePlans(
+          options.project,
+          [plan],
+          placementOptionsForPlan(options, plan),
+        );
+        resolved.push(result);
+      }
+      plans = resolved;
+    }
+
+    console.log(`📦 将基于 ${plans.length} 个计划生成页面`);
+    for (const plan of plans) {
+      console.log(
+        `  - ${plan.resource.slug}: ${plan.resource.title} -> ${plan.placement.resourceRoutePath}`,
+      );
+      printExtraOperations(plan);
+    }
+
+    const apiCheck = await ensureProjectApiFiles(options.project, plans, {
+      force: options.force,
+      dryRun: options.dryRun,
+    });
+    if (apiCheck.planned.length > 0) {
+      console.log(
+        apiCheck.dryRun
+          ? "🧪 Dry-run，将复制以下缺失的 API/类型文件："
+          : "📋 已复制第一步生成的 API/类型文件：",
+      );
+      apiCheck.planned.forEach((item) => console.log(`  ${item.relativePath}`));
+    }
+    if (apiCheck.missing.length > 0) {
+      console.log("⚠ 以下 API/类型文件在项目中缺失，正式生成时会报错：");
+      apiCheck.missing.forEach((file) => console.log(`  ${file}`));
+    }
+    if (!apiCheck.dryRun && apiCheck.writerResult) {
+      throwIfWriteConflicts(apiCheck.writerResult);
+    }
+
+    const result = await generateAquaSageProject({
+      projectRoot: options.project,
+      plans,
+      contractSource: "aquasage-plans",
+      force: options.force,
+      dryRun: options.dryRun,
+      patchRoutes: options.routes,
+      routeGeneration: options.routeGeneration,
+      check: options.check,
+      stage: "pages",
+    });
+
+    if (result.dryRun) {
+      console.log("🧪 Dry-run，不写入文件：");
+      result.files.forEach((file) => console.log(`  ${file}`));
+      return;
+    }
+    console.log(`✅ AquaSage 页面生成完成，报告: ${result.reportPath}`);
     console.log(
       `类型错误基线 ${result.validation.baselineCount ?? "未检查"}，新增 ${result.validation.newDiagnostics.length}`,
     );
@@ -180,9 +498,12 @@ program
   .option("--active-menu <route-name>", "隐藏页面激活的菜单路由名")
   .option("--create-parent", "同步新父路由标题", false)
   .option("--parent-title <text>", "新父路由中文标题")
-  .option("--parent-icon <icon>", "新父路由图标")
-  .option("--parent-order <number>", "新父路由菜单排序")
-  .option("--parent-permission <key>", "新父路由权限标识")
+  .option(
+    "--parent-icon <icon>",
+    "父路由图标（新建父路由或为按路径推导的父路由补充图标）",
+  )
+  .option("--parent-order <number>", "父路由菜单排序")
+  .option("--parent-permission <key>", "父路由权限标识")
   .option("--dry-run", "只检查并输出计划，不生成路由或修改文件", false)
   .option("--force", "覆盖已经人工修改的中文标题", false)
   .option("--no-route-generation", "不执行 pnpm exec sa gen-route")
@@ -775,6 +1096,7 @@ function placementOptions(options) {
   return {
     referenceView: options.referenceView,
     targetParent: options.targetParent,
+    viewDir: options.viewDir,
     menuMode: options.menuMode,
     serviceGroup: options.serviceGroup,
     typeGroup: options.typeGroup,
@@ -792,8 +1114,63 @@ function placementOptions(options) {
   };
 }
 
+function hasPlacementOverrides(options) {
+  return (
+    options.referenceView !== undefined ||
+    options.targetParent !== undefined ||
+    options.viewDir !== undefined ||
+    options.menuMode !== "reference" ||
+    options.serviceGroup !== undefined ||
+    options.typeGroup !== undefined ||
+    options.configGroup !== undefined ||
+    options.typeNamespace !== undefined ||
+    options.attachmentService !== undefined ||
+    options.permission !== undefined ||
+    options.order !== undefined ||
+    options.activeMenu !== undefined ||
+    options.createParent ||
+    options.parentTitle !== undefined ||
+    options.parentIcon !== undefined ||
+    options.parentOrder !== undefined ||
+    options.parentPermission !== undefined
+  );
+}
+
+/** 第二步重解析 placement 时，未显式传入的落位参数沿用计划里记录的取值，保证与第一步一致 */
+function placementOptionsForPlan(options, plan) {
+  const recorded = plan.placement || {};
+  const opts = placementOptions(options);
+  return {
+    ...opts,
+    targetParent: opts.targetParent ?? recorded.parentRoutePath,
+    viewDir: opts.viewDir ?? recorded.viewDir ?? null,
+    serviceGroup: opts.serviceGroup ?? recorded.serviceGroup,
+    typeGroup: opts.typeGroup ?? recorded.typeGroup,
+    configGroup: opts.configGroup ?? recorded.configGroup,
+    typeNamespace: opts.typeNamespace ?? recorded.typeNamespace,
+    attachmentService: opts.attachmentService ?? recorded.attachmentService,
+    permission: opts.permission ?? recorded.menu?.permission ?? null,
+    order: opts.order ?? recorded.menu?.order ?? null,
+    activeMenu: opts.activeMenu ?? recorded.menu?.activeMenu ?? null,
+    createParent: opts.createParent ?? Boolean(recorded.parent?.create),
+    parentTitle: opts.parentTitle ?? recorded.parent?.title ?? null,
+    parentIcon: opts.parentIcon ?? recorded.parent?.icon ?? null,
+    parentOrder: opts.parentOrder ?? recorded.parent?.order ?? null,
+    parentPermission: opts.parentPermission ?? recorded.parent?.permission ?? null,
+  };
+}
+
 function helpBlock(lines) {
   return `\n使用示例与提示：\n${lines.join("\n")}\n`;
+}
+
+/** 输出资源的附加接口清单（衍生查询、导入导出等） */
+function printExtraOperations(plan) {
+  if (!plan.extraOperations?.length) return;
+  const actions = plan.extraOperations.map(
+    (extra) => extra.action.charAt(0).toLowerCase() + extra.action.slice(1),
+  );
+  console.log(`    附加接口 ${actions.length} 个: ${actions.join(", ")}`);
 }
 
 function throwIfWriteConflicts(writeReport) {
