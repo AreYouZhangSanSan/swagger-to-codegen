@@ -767,6 +767,25 @@ test("detects a running vite dev server for the project", () => {
   assert.equal(matchDevCommandLine("node something", "D:/x"), null);
 });
 
+test("still detects the dev server when the command line lost its non-ASCII path", () => {
+  // PowerShell 用 OEM 代码页写 stdout、Node 按 UTF-8 解码时，
+  // 路径里的中文会退化成 U+FFFD，全路径比较必然失败，这里必须靠纯 ASCII 目录名兜住。
+  const damaged =
+    'node   "D:\\workCode\\\uFFFD\uFFFD\uFFFD\\zdwp-aquasage-web\\node_modules\\vite\\bin\\vite.js" --mode test';
+  assert.match(
+    matchDevCommandLine(damaged, "D:/workCode/知识库/zdwp-aquasage-web"),
+    /vite\.js/,
+  );
+  // 命令行没有解码失败字符时不做兜底，避免把同名的其他工程误判成当前工程
+  assert.equal(
+    matchDevCommandLine(
+      "node C:\\other\\zdwp-aquasage-web\\node_modules\\vite\\bin\\vite.js",
+      "D:/workCode/知识库/zdwp-aquasage-web",
+    ),
+    null,
+  );
+});
+
 test("skips elegant route title patching when the file is unparseable", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "aquasage-broken-"));
   try {
